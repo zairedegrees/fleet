@@ -1,4 +1,3 @@
-// cmd/fleet/main.go
 package main
 
 import (
@@ -6,6 +5,12 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/nazaire/fleet/internal/config"
+	"github.com/nazaire/fleet/internal/doctor"
+	"github.com/nazaire/fleet/internal/relay"
+	"github.com/nazaire/fleet/internal/runner"
+	"github.com/nazaire/fleet/internal/wizard"
 )
 
 var (
@@ -18,7 +23,7 @@ var (
 func main() {
 	root := &cobra.Command{
 		Use:   "fleet",
-		Short: "Launch multi-agent Claude Code fleets",
+		Short: "⚡ Launch multi-agent Claude Code fleets",
 		RunE:  run,
 	}
 
@@ -28,23 +33,115 @@ func main() {
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func run(cmd *cobra.Command, args []string) error {
 	switch {
-	case flagKill:
-		fmt.Println("fleet --kill: not yet implemented")
-	case flagStatus:
-		fmt.Println("fleet --status: not yet implemented")
 	case flagDoctor:
-		fmt.Println("fleet --doctor: not yet implemented")
+		return runDoctor()
+	case flagKill:
+		return runKill()
+	case flagStatus:
+		return runStatus()
 	case flagLast:
-		fmt.Println("fleet --last: not yet implemented")
+		return runLast()
 	default:
-		fmt.Println("fleet wizard: not yet implemented")
+		return runWizard()
 	}
+}
+
+func runDoctor() error {
+	checks := doctor.Run()
+	doctor.Print(checks)
+	return nil
+}
+
+func runKill() error {
+	sessions, _ := runner.ListFleetSessions()
+	if len(sessions) == 0 {
+		fmt.Println("  No fleet sessions running.")
+		return nil
+	}
+	runner.KillAllFleetSessions()
+	fmt.Printf("  Killed %d fleet sessions.\n", len(sessions))
+	return nil
+}
+
+func runStatus() error {
+	sessions, _ := runner.ListFleetSessions()
+	if len(sessions) == 0 {
+		fmt.Println("  No fleet sessions running.")
+		return nil
+	}
+	fmt.Printf("  %d fleet sessions:\n\n", len(sessions))
+	for _, s := range sessions {
+		idle := "busy"
+		agent := s[3:] // strip "pm-"
+		if runner.IsIdle(agent) {
+			idle = "idle"
+		}
+		fmt.Printf("    %s  [%s]\n", s, idle)
+	}
+	fmt.Println()
+	return nil
+}
+
+func runLast() error {
+	cfg, err := config.LoadLast()
+	if err != nil {
+		return fmt.Errorf("no saved config found. Run 'fleet' first and choose 'Save config & launch'")
+	}
+	fmt.Printf("  ⚡ Relaunching %s (%d agents)\n\n", cfg.Project.Name, len(cfg.Agents))
+	return launch(cfg, false)
+}
+
+func runWizard() error {
+	client := relay.NewClient("http://localhost:8090/mcp")
+
+	result, err := wizard.Run(client)
+	if err != nil {
+		if err.Error() == "cancelled" {
+			return nil
+		}
+		return err
+	}
+
+	cwd, _ := os.Getwd()
+	result.Config.Project.Cwd = cwd
+
+	return launch(result.Config, result.Save)
+}
+
+func launch(cfg *config.FleetConfig, save bool) error {
+	if save {
+		if err := config.SaveAsLast(cfg); err != nil {
+			fmt.Printf("  ⚠ Failed to save config: %v\n", err)
+		} else {
+			fmt.Println("  Config saved to ~/.fleet/configs/" + cfg.Project.Name + ".toml")
+		}
+	}
+
+	fmt.Println("\n  🚀 Launching fleet...\n")
+	results, err := runner.Launch(cfg)
+	if err != nil {
+		return err
+	}
+
+	success := 0
+	for _, r := range results {
+		if r.Success {
+			success++
+		}
+	}
+
+	var agentNames []string
+	for _, a := range cfg.Agents {
+		agentNames = append(agentNames, a.Name)
+	}
+	runner.OpenITerm2Grid(agentNames)
+
+	fmt.Printf("\n  ✅ Fleet ready. %d/%d agents running.\n\n", success, len(cfg.Agents))
 	return nil
 }
