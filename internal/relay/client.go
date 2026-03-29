@@ -88,17 +88,30 @@ func (c *Client) call(toolName string, args map[string]interface{}) (json.RawMes
 }
 
 func (c *Client) ListProjects() ([]string, error) {
-	data, err := c.call("list_orgs", map[string]interface{}{})
+	// The relay has no list_projects endpoint.
+	// We discover projects by listing all agents (no project filter)
+	// and extracting unique project names.
+	data, err := c.call("list_agents", map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
 	var result struct {
-		Projects []string `json:"projects"`
+		Agents []struct {
+			Project string `json:"project"`
+		} `json:"agents"`
 	}
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}
-	return result.Projects, nil
+	seen := make(map[string]bool)
+	var projects []string
+	for _, a := range result.Agents {
+		if a.Project != "" && !seen[a.Project] {
+			seen[a.Project] = true
+			projects = append(projects, a.Project)
+		}
+	}
+	return projects, nil
 }
 
 func (c *Client) ListAgents(project string) ([]Agent, error) {

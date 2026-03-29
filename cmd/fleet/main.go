@@ -124,10 +124,9 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	}
 
 	fmt.Println("\n  🚀 Launching fleet...\n")
-	results, err := runner.Launch(cfg)
-	if err != nil {
-		return err
-	}
+
+	// Phase 1: Create tmux sessions + launch claude (fast)
+	results := runner.CreateSessions(cfg)
 
 	success := 0
 	for _, r := range results {
@@ -136,12 +135,18 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		}
 	}
 
+	// Phase 2: Open iTerm2 grid immediately (user sees panes while claude boots)
 	var agentNames []string
 	for _, a := range cfg.Agents {
 		agentNames = append(agentNames, a.Name)
 	}
 	runner.OpenITerm2Grid(agentNames)
 
-	fmt.Printf("\n  ✅ Fleet ready. %d/%d agents running.\n\n", success, len(cfg.Agents))
+	// Phase 3: Configure agents in background via a shell script
+	// (fleet exits, script waits for prompts and sends init commands)
+	runner.ConfigureAgentsAsync(cfg)
+
+	fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
+	fmt.Println("  Agents configuring in background (watch iTerm2 panes).\n")
 	return nil
 }

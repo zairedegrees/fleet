@@ -53,23 +53,12 @@ func runProjectStep(relayClient *relay.Client) (string, bool, error) {
 	return fm.result.name, fm.result.isNew, nil
 }
 
-// gatherProjects combines relay projects with saved configs.
+// gatherProjects discovers projects from saved configs and by probing the relay.
 func gatherProjects(relayClient *relay.Client) []string {
 	seen := make(map[string]bool)
 	var projects []string
 
-	if relayClient != nil {
-		if rp, err := relayClient.ListProjects(); err == nil {
-			for _, p := range rp {
-				if !seen[p] {
-					seen[p] = true
-					projects = append(projects, p)
-				}
-			}
-		}
-	}
-
-	// Scan saved configs
+	// 1. Scan saved configs in ~/.fleet/configs/
 	configDir := filepath.Join(config.FleetDir(), "configs")
 	entries, err := os.ReadDir(configDir)
 	if err == nil {
@@ -82,6 +71,34 @@ func gatherProjects(relayClient *relay.Client) []string {
 				seen[name] = true
 				projects = append(projects, name)
 			}
+		}
+	}
+
+	// 2. Scan known project names from ~/.fleet/projects (one per line)
+	projectsFile := filepath.Join(config.FleetDir(), "projects")
+	data, err := os.ReadFile(projectsFile)
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			name := strings.TrimSpace(line)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				projects = append(projects, name)
+			}
+		}
+	}
+
+	// 3. Probe relay for each candidate — verify it has agents
+	if relayClient != nil {
+		var verified []string
+		for _, p := range projects {
+			agents, err := relayClient.ListAgents(p)
+			if err == nil && len(agents) > 0 {
+				verified = append(verified, p)
+			}
+		}
+		// If we found verified projects, prefer those. Otherwise keep all candidates.
+		if len(verified) > 0 {
+			return verified
 		}
 	}
 

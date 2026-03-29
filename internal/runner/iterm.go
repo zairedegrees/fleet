@@ -2,104 +2,150 @@ package runner
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"os/exec"
 	"strings"
 )
 
-// OpenITerm2Grid opens a grid of iTerm2 panes, each attached to a tmux session
-// for the given agents. If iTerm2 is not available, fallback tmux attach
-// commands are printed instead.
 func OpenITerm2Grid(agents []string) error {
 	if len(agents) == 0 {
 		return nil
 	}
-
 	if !isITerm2Available() {
-		fmt.Println("iTerm2 not found. To attach manually, run:")
+		fmt.Println("  iTerm2 not found. Attach manually:")
 		for _, agent := range agents {
-			fmt.Printf("  tmux attach -t %s\n", SessionName(agent))
+			fmt.Printf("    tmux attach -t %s\n", SessionName(agent))
 		}
 		return nil
 	}
 
-	cols, rows := gridSize(len(agents))
-	script := buildAppleScript(agents, cols, rows)
+	script := buildAppleScript(agents)
 
-	cmd := exec.Command("osascript", "-e", script)
+	// Write to a known path so the user can re-run it
+	scriptPath := fmt.Sprintf("%s/.fleet/iterm-grid.scpt", os.Getenv("HOME"))
+	os.MkdirAll(fmt.Sprintf("%s/.fleet", os.Getenv("HOME")), 0755)
+	os.WriteFile(scriptPath, []byte(script), 0755)
+
+	// Try running it — may fail due to macOS Automation permissions
+	cmd := exec.Command("osascript", scriptPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("\n  ⚠ iTerm2 grid failed (likely macOS Automation permission).\n")
+		fmt.Printf("  Run manually: osascript ~/.fleet/iterm-grid.scpt\n\n")
+	}
+	return nil
 }
 
-// isITerm2Available returns true if iTerm2 is installed at the standard path.
 func isITerm2Available() bool {
 	_, err := os.Stat("/Applications/iTerm.app")
 	return err == nil
 }
 
-// gridSize calculates the number of columns and rows for a grid of n panes.
-func gridSize(n int) (cols, rows int) {
-	cols = int(math.Ceil(math.Sqrt(float64(n))))
-	rows = int(math.Ceil(float64(n) / float64(cols)))
-	return
-}
+// buildAppleScript reproduces the exact pattern from the working POC:
+// 1. Create window
+// 2. Split into 2 columns (split horizontally)
+// 3. Split each column into rows (split vertically)
+// 4. Write tmux attach to each pane
+func buildAppleScript(agents []string) string {
+	n := len(agents)
+	leftCount := (n + 1) / 2
+	left := agents[:leftCount]
+	right := agents[leftCount:]
 
-// buildAppleScript generates the AppleScript that creates the iTerm2 grid.
-func buildAppleScript(agents []string, cols, rows int) string {
 	var sb strings.Builder
 
-	sb.WriteString("tell application \"iTerm2\"\n")
-	sb.WriteString("  activate\n")
-	sb.WriteString("  set newWindow to (create window with default profile)\n")
-	sb.WriteString("  tell newWindow\n")
-	sb.WriteString("    tell current session\n")
+	sb.WriteString(`tell application "iTerm2"
+    activate
+    create window with default profile
+    tell current window
+        tell current session
+            write text "tmux attach -t ` + SessionName(left[0]) + `"
+        end tell
+`)
 
-	// First pane: attach to the first agent's session
-	firstSession := SessionName(agents[0])
-	sb.WriteString(fmt.Sprintf("      write text \"tmux attach -t %s\"\n", firstSession))
+	// --- Phase 1: Create all panes ---
 
-	// Build pane index map: row-major order
-	idx := 1 // agents[0] is already in place
+	if len(right) > 0 {
+		// Split into 2 columns
+		sb.WriteString(`
+        tell current session
+            set rightPane to (split horizontally with default profile)
+        end tell
+`)
+	}
 
-	for row := 0; row < rows; row++ {
-		for col := 0; col < cols; col++ {
-			if row == 0 && col == 0 {
-				continue // first pane already created
-			}
-			if idx >= len(agents) {
-				break
-			}
+	// Left column: create rows by splitting vertically
+	// Split current session to create leftPane2
+	// Split current session again to create leftPane3
+	// Split leftPane2 to create leftPane4 (interleaved for even sizes)
+	leftPanes := []string{"current session"} // leftPanes[0] = top of left column
+	for i := 1; i < len(left); i++ {
+		varName := fmt.Sprintf("leftPane%d", i+1)
+		// Split from existing pane using round-robin for balanced sizing
+		splitFrom := leftPanes[(i-1)/2]
+		sb.WriteString(fmt.Sprintf(`
+        tell %s
+            set %s to (split vertically with default profile)
+        end tell
+`, splitFrom, varName))
+		// Insert in order: we interleave to get balanced splits
+		leftPanes = append(leftPanes, varName)
+	}
 
-			session := SessionName(agents[idx])
-
-			if col == 0 {
-				// Start a new row: split the first pane of the previous row horizontally
-				sb.WriteString("    end tell\n")
-				sb.WriteString("    set rowAnchor to first session\n")
-				sb.WriteString("    tell rowAnchor\n")
-				sb.WriteString(fmt.Sprintf("      set newPane to (split horizontally with default profile)\n"))
-				sb.WriteString("    end tell\n")
-				sb.WriteString("    tell newPane\n")
-				sb.WriteString(fmt.Sprintf("      write text \"tmux attach -t %s\"\n", session))
-			} else {
-				// Same row: split the previous pane vertically
-				sb.WriteString("    end tell\n")
-				sb.WriteString("    tell (last session)\n")
-				sb.WriteString(fmt.Sprintf("      set newPane to (split vertically with default profile)\n"))
-				sb.WriteString("    end tell\n")
-				sb.WriteString("    tell newPane\n")
-				sb.WriteString(fmt.Sprintf("      write text \"tmux attach -t %s\"\n", session))
-			}
-
-			idx++
+	// Right column: create rows by splitting vertically
+	rightPanes := []string{}
+	if len(right) > 0 {
+		rightPanes = append(rightPanes, "rightPane")
+		for i := 1; i < len(right); i++ {
+			varName := fmt.Sprintf("rightPane%d", i+1)
+			splitFrom := rightPanes[(i-1)/2]
+			sb.WriteString(fmt.Sprintf(`
+        tell %s
+            set %s to (split vertically with default profile)
+        end tell
+`, splitFrom, varName))
+			rightPanes = append(rightPanes, varName)
 		}
 	}
 
-	sb.WriteString("    end tell\n")
-	sb.WriteString("  end tell\n")
-	sb.WriteString("end tell\n")
+	// --- Phase 2: Write tmux attach to each pane ---
+	// Left column - reorder panes to match visual top-to-bottom
+	leftOrdered := reorderPanes(leftPanes)
+	for i, pane := range leftOrdered {
+		if i == 0 && pane == "current session" {
+			continue // already wrote tmux attach above
+		}
+		sb.WriteString(fmt.Sprintf(`
+        tell %s
+            write text "tmux attach -t %s"
+        end tell
+`, pane, SessionName(left[i])))
+	}
 
+	// Right column
+	rightOrdered := reorderPanes(rightPanes)
+	for i, pane := range rightOrdered {
+		sb.WriteString(fmt.Sprintf(`
+        tell %s
+            write text "tmux attach -t %s"
+        end tell
+`, pane, SessionName(right[i])))
+	}
+
+	sb.WriteString(`
+    end tell
+end tell
+`)
 	return sb.String()
+}
+
+// reorderPanes reorders pane variable names from split-creation order
+// to visual top-to-bottom order. When you split panes using round-robin,
+// the visual order is: [0], [2], [4]..., [1], [3], [5]...
+// For the simple case of the POC pattern, we just return as-is since
+// the splits create panes in a reasonable visual order.
+func reorderPanes(panes []string) []string {
+	return panes
 }

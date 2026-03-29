@@ -58,13 +58,8 @@ func WaitForPrompt(agent string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("tmux", "capture-pane", "-t", session, "-p").Output()
-		if err == nil {
-			lines := strings.Split(string(out), "\n")
-			for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
-				if strings.Contains(lines[i], "❯") {
-					return nil
-				}
-			}
+		if err == nil && strings.Contains(string(out), "❯") {
+			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -76,13 +71,7 @@ func IsIdle(agent string) bool {
 	if err != nil {
 		return false
 	}
-	lines := strings.Split(out, "\n")
-	for i := len(lines) - 1; i >= max(0, len(lines)-5); i-- {
-		if strings.Contains(lines[i], "❯") {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(out, "❯")
 }
 
 func ListFleetSessions() ([]string, error) {
