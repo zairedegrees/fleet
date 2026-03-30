@@ -11,15 +11,9 @@ import (
 
 func TestListProjects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req mpcRequest
-		json.NewDecoder(r.Body).Decode(&req)
-
-		if req.Method != "tools/call" {
-			t.Errorf("unexpected method: %s", req.Method)
-		}
-
+		agentsJSON := `{"agents":[{"name":"a1","project":"proj-a"},{"name":"a2","project":"proj-b"}]}`
 		resp := mpcResponse{
-			Result: json.RawMessage(`{"content":[{"type":"text","text":"{\"projects\":[\"proj-a\",\"proj-b\"]}"}]}`),
+			Result: json.RawMessage(`{"content":[{"type":"text","text":` + jsonEscape(agentsJSON) + `}]}`),
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))

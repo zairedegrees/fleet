@@ -80,7 +80,7 @@ func checkITerm2() Check {
 }
 
 func Print(checks []Check) {
-	fmt.Println("\n  Fleet Doctor\n")
+	fmt.Printf("\n  Fleet Doctor\n\n")
 	for _, c := range checks {
 		icon := "✓"
 		if c.Status == "missing" {

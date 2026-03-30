@@ -200,6 +200,6 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	runner.ConfigureAgentsAsync(cfg)
 
 	fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
-	fmt.Println("  Agents configuring in background (watch iTerm2 panes).")
+	fmt.Printf("  Agents configuring in background (watch iTerm2 panes).\n\n")
 	return nil
 }
