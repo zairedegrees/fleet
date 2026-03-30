@@ -159,6 +159,19 @@ func runLast() error {
 }
 
 func launch(cfg *config.FleetConfig, save bool) error {
+	// Validate config
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Health check: relay must be reachable
+	relayClient := relay.NewClient(cfg.Project.RelayURL)
+	if err := relayClient.Health(); err != nil {
+		fmt.Printf("  ✗ Relay unreachable at %s\n", cfg.Project.RelayURL)
+		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
+		return fmt.Errorf("relay health check failed: %w", err)
+	}
+
 	if save {
 		if err := config.SaveAsLast(cfg); err != nil {
 			fmt.Printf("  ⚠ Failed to save config: %v\n", err)
@@ -167,9 +180,8 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		}
 	}
 
-	fmt.Println("\n  🚀 Launching fleet...\n")
+	fmt.Printf("\n  🚀 Launching fleet...\n\n")
 
-	// Phase 1: Create tmux sessions + launch claude (fast)
 	results := runner.CreateSessions(cfg)
 
 	success := 0
@@ -179,18 +191,15 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		}
 	}
 
-	// Phase 2: Open iTerm2 grid immediately (user sees panes while claude boots)
 	var agentNames []string
 	for _, a := range cfg.Agents {
 		agentNames = append(agentNames, a.Name)
 	}
 	runner.OpenITerm2Grid(agentNames)
 
-	// Phase 3: Configure agents in background via a shell script
-	// (fleet exits, script waits for prompts and sends init commands)
 	runner.ConfigureAgentsAsync(cfg)
 
 	fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
-	fmt.Println("  Agents configuring in background (watch iTerm2 panes).\n")
+	fmt.Println("  Agents configuring in background (watch iTerm2 panes).")
 	return nil
 }
