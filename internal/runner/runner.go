@@ -12,6 +12,7 @@ import (
 
 type LaunchResult struct {
 	Agent   string
+	Action  string // "created", "skipped", "restarted", "failed"
 	Success bool
 	Error   error
 }
@@ -32,23 +33,27 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 		if HasSession(agent.Name) {
 			fmt.Printf("  ✓ %s already running, skipping\n", SessionName(agent.Name))
 			res.Success = true
+			res.Action = "skipped"
 			results = append(results, res)
 			continue
 		}
 
 		if err := CreateSession(agent.Name, cfg.Project.Cwd); err != nil {
 			res.Error = fmt.Errorf("tmux create failed: %w", err)
+			res.Action = "failed"
 			results = append(results, res)
 			continue
 		}
 
 		if err := SendKeys(agent.Name, claudeCmd); err != nil {
 			res.Error = fmt.Errorf("claude launch failed: %w", err)
+			res.Action = "failed"
 			results = append(results, res)
 			continue
 		}
 
 		res.Success = true
+		res.Action = "created"
 		results = append(results, res)
 	}
 

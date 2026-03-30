@@ -95,3 +95,23 @@ func KillAllFleetSessions() error {
 	}
 	return nil
 }
+
+type AgentStatus struct {
+	Name    string
+	HasTmux bool
+	IsIdle  bool
+}
+
+// DetectConflicts checks which agents already have running tmux sessions.
+func DetectConflicts(agents []string) []AgentStatus {
+	var statuses []AgentStatus
+	for _, name := range agents {
+		s := AgentStatus{Name: name}
+		s.HasTmux = HasSession(name)
+		if s.HasTmux {
+			s.IsIdle = IsIdle(name)
+		}
+		statuses = append(statuses, s)
+	}
+	return statuses
+}
