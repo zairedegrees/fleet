@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -95,6 +96,31 @@ func TestListAgentsParseColor(t *testing.T) {
 	}
 	if agents[0].Color != "blue" {
 		t.Errorf("expected color 'blue', got %q", agents[0].Color)
+	}
+}
+
+func TestDispatchTask(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		resp := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"task_id\":\"t-123\"}"}]}}`
+		w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	err := client.DispatchTask("dev", "my-project", "Fix the bug")
+	if err != nil {
+		t.Fatalf("DispatchTask failed: %v", err)
+	}
+
+	params, ok := gotBody["params"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected params object")
+	}
+	if params["name"] != "dispatch_task" {
+		t.Errorf("expected tool name 'dispatch_task', got %v", params["name"])
 	}
 }
 

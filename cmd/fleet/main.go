@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -33,6 +34,16 @@ func main() {
 	root.Flags().BoolVar(&flagKill, "kill", false, "Stop all fleet tmux sessions")
 	root.Flags().BoolVar(&flagStatus, "status", false, "List active fleet sessions")
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
+
+	dispatchCmd := &cobra.Command{
+		Use:   "dispatch [description]",
+		Short: "Dispatch a task to an agent and wake it",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  runDispatch,
+	}
+	dispatchCmd.Flags().String("to", "", "Agent to dispatch to (required)")
+	dispatchCmd.MarkFlagRequired("to")
+	root.AddCommand(dispatchCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -87,6 +98,33 @@ func runStatus() error {
 		fmt.Printf("    %s  [%s]\n", s, idle)
 	}
 	fmt.Println()
+	return nil
+}
+
+func runDispatch(cmd *cobra.Command, args []string) error {
+	agent, _ := cmd.Flags().GetString("to")
+	description := strings.Join(args, " ")
+
+	cfg, err := config.LoadLast()
+	if err != nil {
+		return fmt.Errorf("no fleet config found. Run 'fleet' first")
+	}
+
+	relayURL := cfg.Project.RelayURL
+	if relayURL == "" {
+		relayURL = defaultRelayURL
+	}
+
+	client := relay.NewClient(relayURL)
+	if err := client.DispatchTask(agent, cfg.Project.Name, description); err != nil {
+		return fmt.Errorf("dispatch failed: %w", err)
+	}
+
+	if err := runner.WakeAgent(agent); err != nil {
+		return fmt.Errorf("wake failed: %w", err)
+	}
+
+	fmt.Printf("  ✓ Task dispatched to %s and agent woken\n", agent)
 	return nil
 }
 

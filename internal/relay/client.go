@@ -149,6 +149,17 @@ func (c *Client) ListProfiles(project string) ([]Profile, error) {
 	return result.Profiles, nil
 }
 
+func (c *Client) DispatchTask(agent, project, description string) error {
+	_, err := c.call("dispatch_task", map[string]interface{}{
+		"assignee":    agent,
+		"project":     project,
+		"title":       description,
+		"description": description,
+		"priority":    "high",
+	})
+	return err
+}
+
 func (c *Client) Health() error {
 	_, err := c.call("list_orgs", map[string]interface{}{})
 	return err
