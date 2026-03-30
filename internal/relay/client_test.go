@@ -84,6 +84,26 @@ func TestClientTimeout(t *testing.T) {
 	}
 }
 
+func TestListAgentsParseColor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"agents\":[{\"name\":\"dev\",\"role\":\"Developer\",\"status\":\"active\",\"profile_slug\":\"dev\",\"reports_to\":\"\",\"is_executive\":false,\"color\":\"blue\"}]}"}]}}`
+		w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	agents, err := client.ListAgents("test")
+	if err != nil {
+		t.Fatalf("ListAgents failed: %v", err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(agents))
+	}
+	if agents[0].Color != "blue" {
+		t.Errorf("expected color 'blue', got %q", agents[0].Color)
+	}
+}
+
 func jsonEscape(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

@@ -21,6 +21,7 @@ type Agent struct {
 	ProfileSlug string `json:"profile_slug"`
 	ReportsTo   string `json:"reports_to"`
 	IsExecutive bool   `json:"is_executive"`
+	Color       string `json:"color"`
 }
 
 type Profile struct {

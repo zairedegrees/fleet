@@ -85,11 +85,15 @@ func gatherAgents(relayClient *relay.Client, project string, isNew bool) []agent
 
 	if !isNew && relayClient != nil {
 		if agents, err := relayClient.ListAgents(project); err == nil {
-			for _, a := range agents {
+			for i, a := range agents {
+				color := a.Color
+				if color == "" {
+					color = agentColors[i%len(agentColors)]
+				}
 				items = append(items, agentItem{
 					agent: config.AgentConfig{
 						Name:        a.Name,
-						Color:       "green",
+						Color:       color,
 						Role:        a.Role,
 						ReportsTo:   a.ReportsTo,
 						IsExecutive: a.IsExecutive,
