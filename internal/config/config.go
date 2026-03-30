@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/BurntSushi/toml"
 )
@@ -29,6 +31,37 @@ type AgentConfig struct {
 	Role        string `toml:"role"`
 	ReportsTo   string `toml:"reports_to,omitempty"`
 	IsExecutive bool   `toml:"is_executive,omitempty"`
+}
+
+var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+var validColors = map[string]bool{
+	"green": true, "orange": true, "blue": true, "red": true,
+	"purple": true, "pink": true, "cyan": true, "yellow": true,
+}
+
+func (cfg *FleetConfig) Validate() error {
+	if cfg.Project.Name == "" {
+		return fmt.Errorf("project name is required")
+	}
+	if len(cfg.Agents) == 0 {
+		return fmt.Errorf("at least one agent is required")
+	}
+
+	seen := make(map[string]bool)
+	for _, a := range cfg.Agents {
+		if !validName.MatchString(a.Name) {
+			return fmt.Errorf("invalid agent name %q: must be alphanumeric with hyphens/underscores", a.Name)
+		}
+		if !validColors[a.Color] {
+			return fmt.Errorf("invalid color %q for agent %q", a.Color, a.Name)
+		}
+		if seen[a.Name] {
+			return fmt.Errorf("duplicate agent name %q", a.Name)
+		}
+		seen[a.Name] = true
+	}
+	return nil
 }
 
 func FleetDir() string {

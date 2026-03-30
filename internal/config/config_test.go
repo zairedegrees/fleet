@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,82 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 	if loaded.Agents[1].ReportsTo != "boss" {
 		t.Errorf("reports_to: got %q, want %q", loaded.Agents[1].ReportsTo, "boss")
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     FleetConfig
+		wantErr string
+	}{
+		{
+			name: "valid config",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "my-project", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Developer"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "empty project name",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+			},
+			wantErr: "project name is required",
+		},
+		{
+			name: "invalid agent name",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "test", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "bad agent!", Color: "green", Role: "Dev"}},
+			},
+			wantErr: "invalid agent name",
+		},
+		{
+			name: "invalid color",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "test", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "rainbow", Role: "Dev"}},
+			},
+			wantErr: "invalid color",
+		},
+		{
+			name: "duplicate agent names",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "test", Cwd: "/tmp"},
+				Agents: []AgentConfig{
+					{Name: "dev", Color: "green", Role: "Dev"},
+					{Name: "dev", Color: "blue", Role: "Dev2"},
+				},
+			},
+			wantErr: "duplicate agent name",
+		},
+		{
+			name: "no agents",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "test", Cwd: "/tmp"},
+			},
+			wantErr: "at least one agent is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.wantErr)
+				} else if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+			}
+		})
 	}
 }
 
