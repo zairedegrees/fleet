@@ -13,6 +13,8 @@ import (
 	"github.com/nazaire/fleet/internal/wizard"
 )
 
+const defaultRelayURL = "http://localhost:8090/mcp"
+
 var (
 	flagLast   bool
 	flagKill   bool
@@ -88,17 +90,8 @@ func runStatus() error {
 	return nil
 }
 
-func runLast() error {
-	cfg, err := config.LoadLast()
-	if err != nil {
-		return fmt.Errorf("no saved config found. Run 'fleet' first and choose 'Save config & launch'")
-	}
-	fmt.Printf("  ⚡ Relaunching %s (%d agents)\n\n", cfg.Project.Name, len(cfg.Agents))
-	return launch(cfg, false)
-}
-
 func runWizard() error {
-	client := relay.NewClient("http://localhost:8090/mcp")
+	client := relay.NewClient(defaultRelayURL)
 
 	result, err := wizard.Run(client)
 	if err != nil {
@@ -108,7 +101,61 @@ func runWizard() error {
 		return err
 	}
 
+	if result.Config.Project.RelayURL == "" {
+		result.Config.Project.RelayURL = defaultRelayURL
+	}
+
 	return launch(result.Config, result.Save)
+}
+
+func runLast() error {
+	cfg, err := config.LoadLast()
+	if err != nil {
+		fmt.Println("  No saved config found. Run 'fleet' to create one.")
+		return runWizard()
+	}
+
+	if cfg.Project.RelayURL == "" {
+		cfg.Project.RelayURL = defaultRelayURL
+	}
+
+	// Check for existing sessions
+	var agentNames []string
+	for _, a := range cfg.Agents {
+		agentNames = append(agentNames, a.Name)
+	}
+	conflicts := runner.DetectConflicts(agentNames)
+
+	running := 0
+	for _, c := range conflicts {
+		if c.HasTmux {
+			running++
+		}
+	}
+
+	if running == len(cfg.Agents) {
+		fmt.Printf("  Fleet %s is already running (%d agents).\n", cfg.Project.Name, running)
+		fmt.Println("  Use 'fleet --status' to check or 'fleet --kill' to stop.")
+		return nil
+	}
+
+	if running > 0 {
+		fmt.Printf("  ⚠ %d/%d agents already running:\n", running, len(cfg.Agents))
+		for _, c := range conflicts {
+			if c.HasTmux {
+				state := "busy"
+				if c.IsIdle {
+					state = "idle"
+				}
+				fmt.Printf("    %s [%s]\n", c.Name, state)
+			}
+		}
+		fmt.Println()
+		fmt.Println("  Continuing will skip existing sessions and create missing ones.")
+	}
+
+	fmt.Printf("  ⚡ Relaunching %s (%d agents)\n\n", cfg.Project.Name, len(cfg.Agents))
+	return launch(cfg, false)
 }
 
 func launch(cfg *config.FleetConfig, save bool) error {
