@@ -119,7 +119,7 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 		script += fmt.Sprintf("  tmux send-keys -t %s '%s' Enter\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''"))
 		script += fmt.Sprintf("  sleep 3\n")
 
-		if !agent.IsExecutive {
+		if agent.AutoTalk && !agent.IsExecutive {
 			script += fmt.Sprintf("  wait_prompt %s 15\n", session)
 			script += fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter\n", session)
 		}
@@ -166,10 +166,19 @@ func ConfigureAgents(cfg *config.FleetConfig) {
 		SendKeys(agent.Name, registerCmd)
 		WaitForPrompt(agent.Name, 15*time.Second)
 
-		if !agent.IsExecutive {
+		if agent.AutoTalk && !agent.IsExecutive {
 			SendKeys(agent.Name, "/relay talk")
 		}
 
 		fmt.Printf("  ✓ %s configured\n", SessionName(agent.Name))
 	}
+}
+
+// WakeAgent sends /relay talk to a sleeping agent via tmux.
+// The talk loop will stop on its own after 3 empty checks.
+func WakeAgent(agent string) error {
+	if !HasSession(agent) {
+		return fmt.Errorf("no tmux session for agent %q", agent)
+	}
+	return SendKeys(agent, "/relay talk")
 }
