@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 type Client struct {
@@ -42,7 +43,12 @@ type mpcResponse struct {
 }
 
 func NewClient(url string) *Client {
-	return &Client{url: url, client: &http.Client{}}
+	return &Client{
+		url: url,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}
 }
 
 func (c *Client) call(toolName string, args map[string]interface{}) (json.RawMessage, error) {

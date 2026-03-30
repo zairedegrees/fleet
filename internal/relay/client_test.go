@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestListProjects(t *testing.T) {
@@ -56,6 +58,29 @@ func TestListAgents(t *testing.T) {
 	}
 	if agents[0].Name != "ops" {
 		t.Errorf("expected ops, got %s", agents[0].Name)
+	}
+}
+
+func TestClientTimeout(t *testing.T) {
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+		}
+	}))
+	defer func() {
+		close(done)
+		srv.Close()
+	}()
+
+	client := NewClient(srv.URL)
+	err := client.Health()
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unreachable") && !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("expected timeout-related error, got: %v", err)
 	}
 }
 
