@@ -1,10 +1,14 @@
 package wizard
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nazaire/fleet/internal/config"
 	"github.com/nazaire/fleet/internal/relay"
 )
+
+var errCancelled = fmt.Errorf("cancelled")
 
 // Shared styles used across all wizard steps.
 var (
@@ -29,17 +33,24 @@ func Run(relayClient *relay.Client) (*WizardResult, error) {
 		return nil, err
 	}
 
-	// Step 2: Select/create agents
+	// Step 2: Project directory (auto from saved config, or ask with tab completion)
+	cwd, err := runCwdStep(project)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 3: Select/create agents
 	agents, err := runAgentsStep(relayClient, project, isNew)
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 3: Confirm
+	// Step 4: Confirm
 	result, err := runConfirmStep(project, agents)
 	if err != nil {
 		return nil, err
 	}
 
+	result.Config.Project.Cwd = cwd
 	return result, nil
 }

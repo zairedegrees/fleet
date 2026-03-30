@@ -108,9 +108,6 @@ func runWizard() error {
 		return err
 	}
 
-	cwd, _ := os.Getwd()
-	result.Config.Project.Cwd = cwd
-
 	return launch(result.Config, result.Save)
 }
 

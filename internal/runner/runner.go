@@ -76,6 +76,25 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 	script += "  return 1\n"
 	script += "}\n\n"
 
+	script += "# Ensure profiles exist on relay before registering agents\n"
+	script += fmt.Sprintf("RELAY_URL=\"%s\"\n", cfg.Project.RelayURL)
+	script += `ensure_profile() {
+  local slug="$1" name="$2" role="$3" project="$4"
+  curl -s -X POST "$RELAY_URL" \
+    -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_profile\",\"arguments\":{\"slug\":\"$slug\",\"name\":\"$name\",\"role\":\"$role\",\"project\":\"$project\"}}}" \
+    > /dev/null 2>&1
+}
+`
+
+	for _, agent := range cfg.Agents {
+		escapedName := strings.ReplaceAll(agent.Name, "'", "'\\''")
+		escapedRole := strings.ReplaceAll(agent.Role, "\"", "\\\"")
+		script += fmt.Sprintf("ensure_profile '%s' '%s' '%s' '%s'\n",
+			escapedName, escapedName, escapedRole, cfg.Project.Name)
+	}
+	script += "\n"
+
 	for _, agent := range cfg.Agents {
 		session := SessionName(agent.Name)
 		// Escape single quotes in role for bash
