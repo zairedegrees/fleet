@@ -31,6 +31,7 @@ type AgentConfig struct {
 	Role        string `toml:"role"`
 	ReportsTo   string `toml:"reports_to,omitempty"`
 	IsExecutive bool   `toml:"is_executive,omitempty"`
+	AutoTalk    bool   `toml:"auto_talk,omitempty"`
 }
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)

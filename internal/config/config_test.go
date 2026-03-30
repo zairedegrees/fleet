@@ -132,6 +132,55 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestAutoTalkBackwardCompat(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.toml")
+
+	oldTOML := `[project]
+name = "legacy"
+relay_url = "http://localhost:8090/mcp"
+cwd = "/tmp"
+
+[[agents]]
+name = "dev"
+color = "green"
+role = "Developer"
+`
+	os.WriteFile(path, []byte(oldTOML), 0644)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Agents[0].AutoTalk {
+		t.Error("expected AutoTalk to default to false for old configs")
+	}
+}
+
+func TestAutoTalkRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.toml")
+
+	cfg := &FleetConfig{
+		Project: ProjectConfig{Name: "test", Cwd: "/tmp"},
+		Agents: []AgentConfig{
+			{Name: "boss", Color: "green", Role: "Lead", IsExecutive: true, AutoTalk: true},
+			{Name: "worker", Color: "blue", Role: "Dev"},
+		},
+	}
+	Save(path, cfg)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !loaded.Agents[0].AutoTalk {
+		t.Error("expected boss AutoTalk=true")
+	}
+	if loaded.Agents[1].AutoTalk {
+		t.Error("expected worker AutoTalk=false")
+	}
+}
+
 func TestLoadLastSymlink(t *testing.T) {
 	dir := t.TempDir()
 	configDir := filepath.Join(dir, "configs")
