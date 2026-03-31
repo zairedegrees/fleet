@@ -124,6 +124,41 @@ func TestDispatchTask(t *testing.T) {
 	}
 }
 
+func TestPushVaultDoc(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		resp := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"ok\":true}"}]}}`
+		w.Write([]byte(resp))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	err := client.PushVaultDoc("my-project", "shared/arch.md", []byte("# Architecture"))
+	if err != nil {
+		t.Fatalf("PushVaultDoc failed: %v", err)
+	}
+
+	params, ok := gotBody["params"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected params object")
+	}
+	if params["name"] != "set_memory" {
+		t.Errorf("expected tool name 'set_memory', got %v", params["name"])
+	}
+	args, ok := params["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected arguments object")
+	}
+	if args["key"] != "vault:shared/arch.md" {
+		t.Errorf("expected key 'vault:shared/arch.md', got %v", args["key"])
+	}
+	if args["scope"] != "project" {
+		t.Errorf("expected scope 'project', got %v", args["scope"])
+	}
+}
+
 func jsonEscape(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

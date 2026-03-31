@@ -164,3 +164,16 @@ func (c *Client) Health() error {
 	_, err := c.call("list_orgs", map[string]interface{}{})
 	return err
 }
+
+// PushVaultDoc pushes a vault document to the relay for a specific project.
+// Uses set_memory with scope "project" to store the doc content.
+func (c *Client) PushVaultDoc(project, path string, content []byte) error {
+	_, err := c.call("set_memory", map[string]interface{}{
+		"key":     "vault:" + path,
+		"value":   string(content),
+		"scope":   "project",
+		"project": project,
+		"tags":    []string{"vault", "auto-injected"},
+	})
+	return err
+}
