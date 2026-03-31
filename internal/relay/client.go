@@ -165,6 +165,17 @@ func (c *Client) Health() error {
 	return err
 }
 
+// EnsureProfile creates or updates a profile on the relay.
+func (c *Client) EnsureProfile(name, role, project string) error {
+	_, err := c.call("register_profile", map[string]interface{}{
+		"slug":    name,
+		"name":    name,
+		"role":    role,
+		"project": project,
+	})
+	return err
+}
+
 // PushVaultDoc pushes a vault document to the relay for a specific project.
 // Uses set_memory with scope "project" to store the doc content.
 func (c *Client) PushVaultDoc(project, path string, content []byte) error {
