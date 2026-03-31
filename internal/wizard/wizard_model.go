@@ -126,37 +126,45 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Key routing
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
-		// Global keys
-		switch keyMsg.String() {
-		case "ctrl+c", "q":
-			if !m.drawerOpen && m.project.focus != focusName && m.project.focus != focusPath {
+		// ctrl+c always quits
+		if keyMsg.String() == "ctrl+c" {
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+		// When in text input mode, delegate everything to the active component
+		isTextInput := (m.activePanel == panelLeft && (m.project.focus == focusName || m.project.focus == focusPath)) || m.drawerOpen
+
+		if !isTextInput {
+			switch keyMsg.String() {
+			case "q", "esc":
 				m.quitting = true
 				return m, tea.Quit
-			}
-		case "tab":
-			if !m.drawerOpen && m.project.IsReady() {
-				if m.activePanel == panelLeft {
-					m.activePanel = panelRight
-				} else {
-					m.activePanel = panelLeft
+			case "tab":
+				if m.project.IsReady() {
+					if m.activePanel == panelLeft {
+						m.activePanel = panelRight
+					} else {
+						m.activePanel = panelLeft
+					}
+					return m, nil
 				}
-				return m, nil
-			}
-		case "enter":
-			// If right panel is active and not in drawer -> launch
-			if m.activePanel == panelRight && !m.drawerOpen && m.project.IsReady() {
-				if m.agents.EnabledCount() > 0 {
-					m.launching = true
-					return m, tea.Quit
+			case "enter":
+				// Only launch if right panel is active and project is ready
+				if m.activePanel == panelRight && m.project.IsReady() {
+					if m.agents.EnabledCount() > 0 {
+						m.launching = true
+						return m, tea.Quit
+					}
 				}
-			}
-		case "s":
-			// Save + launch
-			if m.activePanel == panelRight && !m.drawerOpen && m.project.IsReady() {
-				if m.agents.EnabledCount() > 0 {
-					m.launching = true
-					m.saving = true
-					return m, tea.Quit
+			case "s":
+				// Save + launch
+				if m.activePanel == panelRight && m.project.IsReady() {
+					if m.agents.EnabledCount() > 0 {
+						m.launching = true
+						m.saving = true
+						return m, tea.Quit
+					}
 				}
 			}
 		}
@@ -206,8 +214,10 @@ func (m wizardModel) View() string {
 	var help string
 	if m.drawerOpen {
 		help = "tab=field  j/k=select  enter=save  esc=cancel"
-	} else if m.project.focus == focusName || m.project.focus == focusPath {
-		help = "type to enter  enter=confirm  q=quit"
+	} else if m.activePanel == panelLeft && (m.project.focus == focusName || m.project.focus == focusPath) {
+		help = "type to enter  enter=confirm  esc=back  ctrl+c=quit"
+	} else if m.activePanel == panelLeft && m.project.focus == focusPresets {
+		help = "j/k=move  enter=select  q=quit"
 	} else if m.activePanel == panelLeft {
 		help = "j/k=move  enter=select preset  tab=agents panel  q=quit"
 	} else {
