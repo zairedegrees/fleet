@@ -40,6 +40,9 @@ func newWizardModel(relayClient *relay.Client) wizardModel {
 }
 
 func (m wizardModel) Init() tea.Cmd {
+	if m.project.showExisting {
+		return nil // project list is shown, no text input to focus
+	}
 	return m.project.nameInput.Focus()
 }
 
@@ -56,6 +59,23 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.project.width = leftWidth
 		m.agents.width = rightWidth
+		return m, nil
+
+	case ProjectLoadedMsg:
+		// Existing project loaded — populate everything from config
+		cfg := msg.Config
+		m.project.nameInput.SetValue(cfg.Project.Name)
+		m.project.pathInput.SetValue(cfg.Project.Cwd)
+		m.project.ready = true
+		m.project.showExisting = false
+		m.project.focus = focusPresets
+		// Load agents from the saved config
+		var items []agentItem
+		for _, a := range cfg.Agents {
+			items = append(items, agentItem{agent: a, enabled: true})
+		}
+		m.agents.SetAgents(items)
+		m.activePanel = panelRight
 		return m, nil
 
 	case PresetSelectedMsg:
@@ -214,10 +234,10 @@ func (m wizardModel) View() string {
 	var help string
 	if m.drawerOpen {
 		help = "tab=field  j/k=select  enter=save  esc=cancel"
+	} else if m.project.focus == focusProjectList {
+		help = "j/k=move  enter=select  q=quit"
 	} else if m.activePanel == panelLeft && (m.project.focus == focusName || m.project.focus == focusPath) {
 		help = "type to enter  enter=confirm  esc=back  ctrl+c=quit"
-	} else if m.activePanel == panelLeft && m.project.focus == focusPresets {
-		help = "j/k=move  enter=select  q=quit"
 	} else if m.activePanel == panelLeft {
 		help = "j/k=move  enter=select preset  tab=agents panel  q=quit"
 	} else {
