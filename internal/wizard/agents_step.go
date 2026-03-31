@@ -47,8 +47,8 @@ type agentsModel struct {
 	reportOpts   []string // agent names + "(none)"
 }
 
-func runAgentsStep(relayClient *relay.Client, project string, isNew bool) ([]config.AgentConfig, error) {
-	items := gatherAgents(relayClient, project, isNew)
+func runAgentsStep(relayClient *relay.Client, project string, isNew bool, suggested []config.AgentConfig) ([]config.AgentConfig, error) {
+	items := gatherAgents(relayClient, project, isNew, suggested)
 
 	m := agentsModel{
 		items: items,
@@ -80,7 +80,7 @@ func runAgentsStep(relayClient *relay.Client, project string, isNew bool) ([]con
 	return agents, nil
 }
 
-func gatherAgents(relayClient *relay.Client, project string, isNew bool) []agentItem {
+func gatherAgents(relayClient *relay.Client, project string, isNew bool, suggested []config.AgentConfig) []agentItem {
 	var items []agentItem
 
 	if !isNew && relayClient != nil {
@@ -101,6 +101,23 @@ func gatherAgents(relayClient *relay.Client, project string, isNew bool) []agent
 					enabled: true,
 				})
 			}
+		}
+	}
+
+	// Add suggested agents from scan (if any, and not already present from relay)
+	for _, s := range suggested {
+		found := false
+		for _, item := range items {
+			if item.agent.Name == s.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			items = append(items, agentItem{
+				agent:   s,
+				enabled: true,
+			})
 		}
 	}
 
