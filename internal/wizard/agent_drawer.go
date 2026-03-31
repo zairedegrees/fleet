@@ -1,7 +1,6 @@
 package wizard
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -303,10 +302,4 @@ func (d agentDrawer) View() string {
 	sb.WriteString("\n" + dimStyle.Render("  tab=next  enter=save  esc=cancel"))
 
 	return sb.String()
-}
-
-// colorToAnsi returns a colored dot string for the given color name.
-// This is a stub — the real implementation will live in agents_panel.go.
-func colorToAnsi(color string) string {
-	return fmt.Sprintf("(%s)", color)
 }
