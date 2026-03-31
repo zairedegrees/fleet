@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -44,6 +45,16 @@ func main() {
 	dispatchCmd.Flags().String("to", "", "Agent to dispatch to (required)")
 	dispatchCmd.MarkFlagRequired("to")
 	root.AddCommand(dispatchCmd)
+
+	logsCmd := &cobra.Command{
+		Use:   "logs <agent>",
+		Short: "Stream an agent's terminal output",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runLogs,
+	}
+	logsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
+	logsCmd.Flags().BoolP("follow", "f", true, "Follow output (poll every 1s)")
+	root.AddCommand(logsCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -126,6 +137,57 @@ func runDispatch(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("  ✓ Task dispatched to %s and agent woken\n", agent)
 	return nil
+}
+
+func runLogs(cmd *cobra.Command, args []string) error {
+	agent := args[0]
+	follow, _ := cmd.Flags().GetBool("follow")
+	lines, _ := cmd.Flags().GetInt("lines")
+
+	if !runner.HasSession(agent) {
+		return fmt.Errorf("no fleet session for agent %q. Run 'fleet --status' to see active sessions", agent)
+	}
+
+	// Initial capture
+	output, err := runner.CapturePane(agent)
+	if err != nil {
+		return fmt.Errorf("capture failed: %w", err)
+	}
+
+	// Show last N lines
+	allLines := strings.Split(output, "\n")
+	start := 0
+	if len(allLines) > lines {
+		start = len(allLines) - lines
+	}
+	lastOutput := strings.Join(allLines[start:], "\n")
+	fmt.Print(lastOutput)
+
+	if !follow {
+		return nil
+	}
+
+	// Follow mode: poll every 1s, print new content
+	prev := output
+	for {
+		time.Sleep(1 * time.Second)
+		current, err := runner.CapturePane(agent)
+		if err != nil {
+			return nil // session probably died
+		}
+		if current != prev {
+			// Print the diff — find where new content starts
+			// Simple approach: just reprint everything if changed
+			fmt.Print("\033[2J\033[H") // clear screen
+			allLines = strings.Split(current, "\n")
+			start = 0
+			if len(allLines) > lines {
+				start = len(allLines) - lines
+			}
+			fmt.Print(strings.Join(allLines[start:], "\n"))
+			prev = current
+		}
+	}
 }
 
 func runWizard() error {
