@@ -3,12 +3,13 @@ package runner
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nazaire/fleet/internal/config"
-	"github.com/nazaire/fleet/internal/relay"
 )
 
 type LaunchResult struct {
@@ -46,6 +47,15 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 			continue
 		}
 
+		// Explicit cd to ensure Claude starts in the right directory
+		if err := SendKeys(agent.Name, "cd "+cfg.Project.Cwd); err != nil {
+			res.Error = fmt.Errorf("cd failed: %w", err)
+			res.Action = "failed"
+			results = append(results, res)
+			continue
+		}
+		time.Sleep(200 * time.Millisecond)
+
 		if err := SendKeys(agent.Name, claudeCmd); err != nil {
 			res.Error = fmt.Errorf("claude launch failed: %w", err)
 			res.Action = "failed"
@@ -61,104 +71,117 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 	return results
 }
 
-// ConfigureAgentsAsync configures agents in the background using Go goroutines.
-// It waits for each agent's Claude prompt, then sends init commands.
+// ConfigureAgentsAsync generates a shell script that configures agents after
+// Claude boots, then launches it as a detached process that survives fleet exit.
 // Logs output to ~/.fleet/logs/configure-{timestamp}.log
 func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 	logDir := filepath.Join(config.FleetDir(), "logs")
 	os.MkdirAll(logDir, 0755)
+	rotateConfigLogs(logDir, 5)
 
 	timestamp := time.Now().Format("20060102-150405")
 	logPath := filepath.Join(logDir, fmt.Sprintf("configure-%s.log", timestamp))
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		fmt.Printf("  ⚠ Could not create log file: %v\n", err)
-		logFile = nil
+	scriptPath := filepath.Join(config.FleetDir(), "configure-agents.sh")
+
+	relayURL := cfg.Project.RelayURL
+	if relayURL == "" {
+		relayURL = "http://localhost:8090/mcp"
 	}
 
-	// Rotate: keep only last 5 log files
-	rotateConfigLogs(logDir, 5)
+	var script strings.Builder
+	script.WriteString("#!/bin/bash\n")
+	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
+	script.WriteString("wait_prompt() {\n")
+	script.WriteString("  local session=$1 timeout=$2 elapsed=0\n")
+	script.WriteString("  while [ $elapsed -lt $timeout ]; do\n")
+	script.WriteString("    if tmux capture-pane -t \"$session\" -p 2>/dev/null | grep -q '❯'; then\n")
+	script.WriteString("      return 0\n")
+	script.WriteString("    fi\n")
+	script.WriteString("    sleep 1\n")
+	script.WriteString("    elapsed=$((elapsed + 1))\n")
+	script.WriteString("  done\n")
+	script.WriteString("  return 1\n")
+	script.WriteString("}\n\n")
 
-	go func() {
-		if logFile != nil {
-			defer logFile.Close()
+	// Ensure profiles via relay
+	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", relayURL))
+	script.WriteString(`ensure_profile() {
+  local slug="$1" name="$2" role="$3" project="$4"
+  curl -s -X POST "$RELAY_URL" \
+    -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_profile\",\"arguments\":{\"slug\":\"$slug\",\"name\":\"$name\",\"role\":\"$role\",\"project\":\"$project\"}}}" \
+    > /dev/null 2>&1
+}
+`)
+
+	for _, agent := range cfg.Agents {
+		escapedName := strings.ReplaceAll(agent.Name, "'", "'\\''")
+		escapedRole := strings.ReplaceAll(agent.Role, "\"", "\\\"")
+		script.WriteString(fmt.Sprintf("ensure_profile '%s' '%s' '%s' '%s'\n",
+			escapedName, escapedName, escapedRole, cfg.Project.Name))
+	}
+	script.WriteString("\n")
+
+	// Configure each agent
+	for _, agent := range cfg.Agents {
+		session := SessionName(agent.Name)
+		escapedRole := strings.ReplaceAll(agent.Role, "'", "'\\''")
+
+		script.WriteString(fmt.Sprintf("# Configure %s\n", agent.Name))
+		script.WriteString(fmt.Sprintf("if wait_prompt %s 90; then\n", session))
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/rename %s' Enter\n", session, agent.Name))
+		script.WriteString("  sleep 2\n")
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/color %s' Enter\n", session, agent.Color))
+		script.WriteString("  sleep 2\n")
+
+		registerCmd := fmt.Sprintf("/relay register %s %s %s", agent.Name, cfg.Project.Name, escapedRole)
+		if agent.ReportsTo != "" {
+			registerCmd += " Reports to " + agent.ReportsTo + "."
+		}
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s' Enter\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
+		script.WriteString("  sleep 3\n")
+
+		// Set profile_slug via direct relay call — without this, agents can't see dispatched tasks
+		script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_agent\",\"arguments\":{\"name\":\"%s\",\"project\":\"%s\",\"role\":\"%s\",\"profile_slug\":\"%s\"}}}' > /dev/null 2>&1\n",
+			agent.Name, cfg.Project.Name, strings.ReplaceAll(agent.Role, "\"", "\\\""), agent.Name))
+		script.WriteString("  sleep 1\n")
+
+		// Vault injection via relay
+		vaultDir := filepath.Join(cfg.Project.Cwd, ".fleet", "vault")
+		docs, err := config.ResolveVaultDocs(vaultDir, agent)
+		if err == nil && len(docs) > 0 {
+			totalSize := config.VaultSize(docs)
+			if totalSize > int64(config.VaultSizeWarningBytes) {
+				script.WriteString(fmt.Sprintf("  echo 'WARNING: vault for %s is %dKB (>50KB)'\n", agent.Name, totalSize/1024))
+			}
+			for _, doc := range docs {
+				escapedContent := strings.ReplaceAll(string(doc.Content), "'", "'\\''")
+				escapedContent = strings.ReplaceAll(escapedContent, "\n", "\\n")
+				script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"set_memory\",\"arguments\":{\"key\":\"vault:%s\",\"value\":\"%s\",\"scope\":\"project\",\"project\":\"%s\",\"tags\":[\"vault\",\"auto-injected\"]}}}' > /dev/null 2>&1\n",
+					doc.Path, strings.ReplaceAll(escapedContent, "\"", "\\\""), cfg.Project.Name))
+			}
+			script.WriteString(fmt.Sprintf("  echo 'vault injected for %s: %d docs'\n", agent.Name, len(docs)))
 		}
 
-		logMsg := func(format string, args ...interface{}) {
-			msg := fmt.Sprintf(format, args...)
-			if logFile != nil {
-				fmt.Fprintln(logFile, msg)
-			}
+		if !agent.IsExecutive {
+			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
+			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter\n", session))
 		}
 
-		relayURL := cfg.Project.RelayURL
-		if relayURL == "" {
-			relayURL = "http://localhost:8090/mcp"
-		}
-		relayClient := relay.NewClient(relayURL)
+		script.WriteString(fmt.Sprintf("  echo '✓ %s configured'\n", session))
+		script.WriteString("else\n")
+		script.WriteString(fmt.Sprintf("  echo '⚠ %s: timeout'\n", session))
+		script.WriteString("fi\n\n")
+	}
 
-		// Phase 1: Ensure profiles exist
-		for _, agent := range cfg.Agents {
-			relayClient.EnsureProfile(agent.Name, agent.Role, cfg.Project.Name)
-			logMsg("profile ensured: %s", agent.Name)
-		}
+	script.WriteString("echo 'all agents configured'\n")
 
-		// Phase 2: Configure each agent sequentially (must wait for prompts)
-		for _, agent := range cfg.Agents {
-			session := SessionName(agent.Name)
+	os.WriteFile(scriptPath, []byte(script.String()), 0755)
 
-			if err := WaitForPrompt(agent.Name, 90*time.Second); err != nil {
-				logMsg("ERROR: %s timeout waiting for prompt", agent.Name)
-				fmt.Printf("  ⚠ %s: timeout waiting for prompt\n", agent.Name)
-				continue
-			}
-
-			SendKeys(agent.Name, "/rename "+agent.Name)
-			time.Sleep(2 * time.Second)
-
-			SendKeys(agent.Name, "/color "+agent.Color)
-			time.Sleep(2 * time.Second)
-
-			registerCmd := fmt.Sprintf("/relay register %s %s %s",
-				agent.Name, cfg.Project.Name, agent.Role)
-			if agent.ReportsTo != "" {
-				registerCmd += " Reports to " + agent.ReportsTo + "."
-			}
-			SendKeys(agent.Name, registerCmd)
-			time.Sleep(3 * time.Second)
-
-			// Vault injection
-			vaultDir := filepath.Join(cfg.Project.Cwd, ".fleet", "vault")
-			docs, err := config.ResolveVaultDocs(vaultDir, agent)
-			if err != nil {
-				logMsg("ERROR: vault resolve for %s: %v", agent.Name, err)
-			} else if len(docs) > 0 {
-				totalSize := config.VaultSize(docs)
-				if totalSize > int64(config.VaultSizeWarningBytes) {
-					logMsg("WARNING: vault for %s is %dKB (>50KB threshold)", agent.Name, totalSize/1024)
-					fmt.Printf("  ⚠ %s: vault docs total %dKB (>50KB)\n", agent.Name, totalSize/1024)
-				}
-				for _, doc := range docs {
-					if err := relayClient.PushVaultDoc(cfg.Project.Name, doc.Path, doc.Content); err != nil {
-						logMsg("ERROR: vault push %s for %s: %v", doc.Path, agent.Name, err)
-					} else {
-						logMsg("vault pushed: %s -> %s", doc.Path, agent.Name)
-					}
-				}
-				logMsg("vault injection complete for %s: %d docs, %d bytes", agent.Name, len(docs), totalSize)
-			}
-
-			if agent.AutoTalk && !agent.IsExecutive {
-				WaitForPrompt(agent.Name, 15*time.Second)
-				SendKeys(agent.Name, "/relay talk")
-			}
-
-			logMsg("configured: %s (%s)", session, agent.Role)
-			fmt.Printf("  ✓ %s configured\n", session)
-		}
-
-		logMsg("all agents configured")
-	}()
+	// Launch as detached process — survives fleet exit
+	cmd := exec.Command("bash", scriptPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Start()
 }
 
 // rotateConfigLogs keeps only the N most recent log files.
