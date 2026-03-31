@@ -56,6 +56,27 @@ func main() {
 	logsCmd.Flags().BoolP("follow", "f", true, "Follow output (poll every 1s)")
 	root.AddCommand(logsCmd)
 
+	addCmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add an agent to the running fleet",
+		RunE:  runAdd,
+	}
+	addCmd.Flags().String("name", "", "Agent name (required)")
+	addCmd.Flags().String("role", "", "Agent role (required)")
+	addCmd.Flags().String("color", "green", "Agent color")
+	addCmd.Flags().String("reports-to", "", "Manager agent name")
+	addCmd.MarkFlagRequired("name")
+	addCmd.MarkFlagRequired("role")
+	root.AddCommand(addCmd)
+
+	stopCmd := &cobra.Command{
+		Use:   "stop <agent>",
+		Short: "Stop a running agent",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runStop,
+	}
+	root.AddCommand(stopCmd)
+
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -188,6 +209,90 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			prev = current
 		}
 	}
+}
+
+func runAdd(cmd *cobra.Command, args []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	role, _ := cmd.Flags().GetString("role")
+	color, _ := cmd.Flags().GetString("color")
+	reportsTo, _ := cmd.Flags().GetString("reports-to")
+
+	cfg, err := config.LoadLast()
+	if err != nil {
+		return fmt.Errorf("no fleet config found. Run 'fleet' first")
+	}
+
+	if runner.HasSession(name) {
+		return fmt.Errorf("agent %q already has a running session", name)
+	}
+
+	agent := config.AgentConfig{
+		Name:      name,
+		Color:     color,
+		Role:      role,
+		ReportsTo: reportsTo,
+	}
+
+	// Create tmux session + launch claude
+	claudeCmd := "claude"
+	for _, f := range cfg.Claude.Flags {
+		claudeCmd += " " + f
+	}
+
+	if err := runner.CreateSession(name, cfg.Project.Cwd); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	if err := runner.SendKeys(name, claudeCmd); err != nil {
+		return fmt.Errorf("failed to launch claude: %w", err)
+	}
+
+	// Append to config and save
+	cfg.Agents = append(cfg.Agents, agent)
+	if err := config.SaveAsLast(cfg); err != nil {
+		fmt.Printf("  ⚠ Failed to update config: %v\n", err)
+	}
+
+	fmt.Printf("  ✓ Agent %s added. Configure manually or use 'fleet dispatch' to assign work.\n", name)
+	return nil
+}
+
+func runStop(cmd *cobra.Command, args []string) error {
+	agent := args[0]
+
+	if !runner.HasSession(agent) {
+		return fmt.Errorf("no fleet session for agent %q", agent)
+	}
+
+	// Try graceful exit first
+	runner.SendKeys(agent, "/exit")
+	time.Sleep(3 * time.Second)
+
+	// Force kill if still alive
+	if runner.HasSession(agent) {
+		runner.KillSession(agent)
+	}
+
+	// Update config if possible
+	cfg, err := config.LoadLast()
+	if err == nil {
+		var updated []config.AgentConfig
+		for _, a := range cfg.Agents {
+			if a.Name != agent {
+				updated = append(updated, a)
+			}
+		}
+		cfg.Agents = updated
+		config.SaveAsLast(cfg)
+	}
+
+	// Check if fleet is now empty
+	sessions, _ := runner.ListFleetSessions()
+	if len(sessions) == 0 {
+		fmt.Printf("  ✓ Agent %s stopped. Fleet is now empty.\n", agent)
+	} else {
+		fmt.Printf("  ✓ Agent %s stopped. %d agents remaining.\n", agent, len(sessions))
+	}
+	return nil
 }
 
 func runWizard() error {
