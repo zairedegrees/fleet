@@ -109,6 +109,14 @@ func runKill() error {
 		fmt.Println("  No fleet sessions running.")
 		return nil
 	}
+
+	// Auto-save current config before killing
+	cfg, err := config.LoadLast()
+	if err == nil {
+		config.SaveAsLast(cfg)
+		fmt.Printf("  Config saved for %s.\n", cfg.Project.Name)
+	}
+
 	runner.KillAllFleetSessions()
 	fmt.Printf("  Killed %d fleet sessions.\n", len(sessions))
 	return nil
@@ -377,12 +385,11 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return fmt.Errorf("relay health check failed: %w", err)
 	}
 
-	if save {
-		if err := config.SaveAsLast(cfg); err != nil {
-			fmt.Printf("  ⚠ Failed to save config: %v\n", err)
-		} else {
-			fmt.Println("  Config saved to ~/.fleet/configs/" + cfg.Project.Name + ".toml")
-		}
+	// Always save config — needed for --last, --kill, add, stop, dispatch
+	if err := config.SaveAsLast(cfg); err != nil {
+		fmt.Printf("  ⚠ Failed to save config: %v\n", err)
+	} else if save {
+		fmt.Println("  Config saved to ~/.fleet/configs/" + cfg.Project.Name + ".toml")
 	}
 
 	fmt.Printf("\n  🚀 Launching fleet...\n\n")
