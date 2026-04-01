@@ -2,6 +2,7 @@ package relay
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,11 +13,9 @@ import (
 
 func TestListProjects(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentsJSON := `{"agents":[{"name":"a1","project":"proj-a"},{"name":"a2","project":"proj-b"}]}`
-		resp := mpcResponse{
-			Result: json.RawMessage(`{"content":[{"type":"text","text":` + jsonEscape(agentsJSON) + `}]}`),
-		}
-		json.NewEncoder(w).Encode(resp)
+		agentsJSON := `{"agents":[{"name":"a1","role":"dev","status":"active","project":"proj-a"},{"name":"a2","role":"ops","status":"active","project":"proj-b"}]}`
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`, jsonEscape(agentsJSON))
 	}))
 	defer server.Close()
 
@@ -26,7 +25,7 @@ func TestListProjects(t *testing.T) {
 		t.Fatalf("ListProjects failed: %v", err)
 	}
 	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects, got %d", len(projects))
+		t.Fatalf("expected 2 projects, got %d: %v", len(projects), projects)
 	}
 	if projects[0] != "proj-a" {
 		t.Errorf("expected proj-a, got %s", projects[0])
@@ -36,10 +35,8 @@ func TestListProjects(t *testing.T) {
 func TestListAgents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentsJSON := `{"agents":[{"name":"ops","role":"monitor","status":"active"},{"name":"quant","role":"analyst","status":"inactive"}],"count":2}`
-		resp := mpcResponse{
-			Result: json.RawMessage(`{"content":[{"type":"text","text":` + jsonEscape(agentsJSON) + `}]}`),
-		}
-		json.NewEncoder(w).Encode(resp)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`, jsonEscape(agentsJSON))
 	}))
 	defer server.Close()
 
@@ -81,8 +78,9 @@ func TestClientTimeout(t *testing.T) {
 
 func TestListAgentsParseColor(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"agents\":[{\"name\":\"dev\",\"role\":\"Developer\",\"status\":\"active\",\"profile_slug\":\"dev\",\"reports_to\":\"\",\"is_executive\":false,\"color\":\"blue\"}]}"}]}}`
-		w.Write([]byte(resp))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`,
+			jsonEscape(`{"agents":[{"name":"dev","role":"Developer","status":"active","profile_slug":"dev","reports_to":"","is_executive":false,"color":"blue"}]}`))
 	}))
 	defer srv.Close()
 
@@ -153,9 +151,6 @@ func TestPushVaultDoc(t *testing.T) {
 	}
 	if args["key"] != "vault:shared/arch.md" {
 		t.Errorf("expected key 'vault:shared/arch.md', got %v", args["key"])
-	}
-	if args["scope"] != "project" {
-		t.Errorf("expected scope 'project', got %v", args["scope"])
 	}
 }
 

@@ -23,6 +23,7 @@ type LaunchResult struct {
 // Returns immediately — does NOT wait for Claude to boot.
 func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 	var results []LaunchResult
+	project := cfg.Project.Name
 
 	claudeCmd := "claude"
 	for _, f := range cfg.Claude.Flags {
@@ -32,15 +33,15 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 	for _, agent := range cfg.Agents {
 		res := LaunchResult{Agent: agent.Name}
 
-		if HasSession(agent.Name) {
-			fmt.Printf("  ✓ %s already running, skipping\n", SessionName(agent.Name))
+		if HasSession(project, agent.Name) {
+			fmt.Printf("  ✓ %s already running, skipping\n", SessionName(project, agent.Name))
 			res.Success = true
 			res.Action = "skipped"
 			results = append(results, res)
 			continue
 		}
 
-		if err := CreateSession(agent.Name, cfg.Project.Cwd); err != nil {
+		if err := CreateSession(project, agent.Name, cfg.Project.Cwd); err != nil {
 			res.Error = fmt.Errorf("tmux create failed: %w", err)
 			res.Action = "failed"
 			results = append(results, res)
@@ -48,7 +49,7 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 		}
 
 		// Explicit cd to ensure Claude starts in the right directory
-		if err := SendKeys(agent.Name, "cd "+cfg.Project.Cwd); err != nil {
+		if err := SendKeys(project, agent.Name, "cd "+cfg.Project.Cwd); err != nil {
 			res.Error = fmt.Errorf("cd failed: %w", err)
 			res.Action = "failed"
 			results = append(results, res)
@@ -56,7 +57,7 @@ func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
 		}
 		time.Sleep(200 * time.Millisecond)
 
-		if err := SendKeys(agent.Name, claudeCmd); err != nil {
+		if err := SendKeys(project, agent.Name, claudeCmd); err != nil {
 			res.Error = fmt.Errorf("claude launch failed: %w", err)
 			res.Action = "failed"
 			results = append(results, res)
@@ -123,8 +124,9 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 	script.WriteString("\n")
 
 	// Configure each agent
+	project := cfg.Project.Name
 	for _, agent := range cfg.Agents {
-		session := SessionName(agent.Name)
+		session := SessionName(project, agent.Name)
 		escapedRole := strings.ReplaceAll(agent.Role, "'", "'\\''")
 
 		script.WriteString(fmt.Sprintf("# Configure %s\n", agent.Name))
@@ -204,11 +206,4 @@ func rotateConfigLogs(logDir string, keep int) {
 	}
 }
 
-// WakeAgent sends /relay talk to a sleeping agent via tmux.
-// The talk loop will stop on its own after 3 empty checks.
-func WakeAgent(agent string) error {
-	if !HasSession(agent) {
-		return fmt.Errorf("no tmux session for agent %q", agent)
-	}
-	return SendKeys(agent, "/relay talk")
-}
+// WakeAgent is defined in tmux.go

@@ -7,19 +7,19 @@ import (
 	"strings"
 )
 
-func OpenITerm2Grid(agents []string) error {
+func OpenITerm2Grid(project string, agents []string) error {
 	if len(agents) == 0 {
 		return nil
 	}
 	if !isITerm2Available() {
 		fmt.Println("  iTerm2 not found. Attach manually:")
 		for _, agent := range agents {
-			fmt.Printf("    tmux attach -t %s\n", SessionName(agent))
+			fmt.Printf("    tmux attach -t %s\n", SessionName(project, agent))
 		}
 		return nil
 	}
 
-	script := buildAppleScript(agents)
+	script := buildAppleScript(project, agents)
 
 	// Write to a known path so the user can re-run it
 	scriptPath := fmt.Sprintf("%s/.fleet/iterm-grid.scpt", os.Getenv("HOME"))
@@ -48,7 +48,7 @@ func isITerm2Available() bool {
 // 2. Split into 2 columns (split horizontally)
 // 3. Split each column into rows (split vertically)
 // 4. Write tmux attach to each pane
-func buildAppleScript(agents []string) string {
+func buildAppleScript(project string, agents []string) string {
 	n := len(agents)
 	leftCount := (n + 1) / 2
 	left := agents[:leftCount]
@@ -61,7 +61,7 @@ func buildAppleScript(agents []string) string {
     create window with default profile
     tell current window
         tell current session
-            write text "tmux attach -t ` + SessionName(left[0]) + `"
+            write text "tmux attach -t ` + SessionName(project, left[0]) + `"
         end tell
 `)
 
@@ -121,7 +121,7 @@ func buildAppleScript(agents []string) string {
         tell %s
             write text "tmux attach -t %s"
         end tell
-`, pane, SessionName(left[i])))
+`, pane, SessionName(project, left[i])))
 	}
 
 	// Right column
@@ -131,7 +131,7 @@ func buildAppleScript(agents []string) string {
         tell %s
             write text "tmux attach -t %s"
         end tell
-`, pane, SessionName(right[i])))
+`, pane, SessionName(project, right[i])))
 	}
 
 	sb.WriteString(`
