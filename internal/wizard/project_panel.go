@@ -17,20 +17,30 @@ type PresetSelectedMsg struct {
 	Preset Preset
 }
 
-// ProjectLoadedMsg is sent when an existing project is selected.
+// ProjectLoadedMsg is sent when an existing project with saved config is selected.
 type ProjectLoadedMsg struct {
 	Config *config.FleetConfig
 }
 
+// ProjectSelectedMsg is sent when a project is selected but has no saved config.
+// The wizard model should query the relay for its agents.
+type ProjectSelectedMsg struct {
+	Name string
+	Path string
+}
+
+const (
+	focusProjectList leftFocus = 3
+)
+
 type projectPanel struct {
 	// Existing projects
-	existingProjects []string // project names from ~/.fleet/configs/
+	existingProjects []existingProject
 	projectCursor    int
-	showExisting     bool // true when showing project list
 
-	// New project inputs
-	nameInput textinput.Model
+	// Path input (for new projects)
 	pathInput textinput.Model
+	projName  string // auto-derived from path basename
 
 	// Presets
 	presets      []Preset
@@ -41,81 +51,104 @@ type projectPanel struct {
 	width int
 }
 
-const (
-	focusProjectList leftFocus = 3
-)
+type existingProject struct {
+	name string
+	path string // cwd from saved config, empty if unknown
+}
 
 func newProjectPanel() projectPanel {
-	ni := textinput.New()
-	ni.Placeholder = "project-name"
-	ni.CharLimit = 40
-	ni.Width = 25
-
 	pi := textinput.New()
-	pi.Placeholder = "/path/to/project"
+	pi.Placeholder = "~/path/to/project"
 	pi.CharLimit = 200
-	pi.Width = 25
+	pi.Width = 30
 	pi.ShowSuggestions = true
 
-	// Discover existing projects
 	existing := discoverProjects()
 
-	p := projectPanel{
-		nameInput:        ni,
+	return projectPanel{
 		pathInput:        pi,
 		presets:          AllPresets(),
 		existingProjects: existing,
-		showExisting:     len(existing) > 0,
+		focus:            focusProjectList,
 	}
-
-	if p.showExisting {
-		p.focus = focusProjectList
-	} else {
-		p.focus = focusName
-		p.nameInput.Focus()
-	}
-
-	return p
 }
 
-// discoverProjects scans ~/.fleet/configs/ for existing project configs.
-func discoverProjects() []string {
+// discoverProjects finds existing projects from configs and projects file.
+func discoverProjects() []existingProject {
+	seen := make(map[string]bool)
+	var projects []existingProject
+
+	// 1. Scan ~/.fleet/configs/*.toml
 	configDir := filepath.Join(config.FleetDir(), "configs")
 	entries, err := os.ReadDir(configDir)
-	if err != nil {
-		return nil
-	}
-	var projects []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".toml") {
-			projects = append(projects, strings.TrimSuffix(e.Name(), ".toml"))
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".toml") {
+				name := strings.TrimSuffix(e.Name(), ".toml")
+				if !seen[name] {
+					seen[name] = true
+					// Try to load the config to get the cwd
+					path := ""
+					cfgPath := filepath.Join(configDir, e.Name())
+					if cfg, err := config.Load(cfgPath); err == nil {
+						path = cfg.Project.Cwd
+					}
+					projects = append(projects, existingProject{name: name, path: path})
+				}
+			}
 		}
 	}
+
+	// 2. Scan ~/.fleet/projects file (one name per line)
+	projectsFile := filepath.Join(config.FleetDir(), "projects")
+	data, err := os.ReadFile(projectsFile)
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			name := strings.TrimSpace(line)
+			if name != "" && !seen[name] {
+				seen[name] = true
+				projects = append(projects, existingProject{name: name})
+			}
+		}
+	}
+
+	// 3. Check last.toml symlink
+	lastPath := filepath.Join(config.FleetDir(), "last.toml")
+	if cfg, err := config.Load(lastPath); err == nil {
+		if !seen[cfg.Project.Name] {
+			seen[cfg.Project.Name] = true
+			projects = append(projects, existingProject{name: cfg.Project.Name, path: cfg.Project.Cwd})
+		}
+	}
+
 	return projects
 }
 
 // pathSuggestions returns directory suggestions for the current path input.
 func pathSuggestions(current string) []string {
+	home, _ := os.UserHomeDir()
+
 	if current == "" {
-		return nil
+		// Empty input — suggest home subdirectories
+		if home == "" {
+			return nil
+		}
+		return listDirSuggestions(home, "", home)
 	}
 
-	// Expand ~
-	expanded := current
-	if strings.HasPrefix(expanded, "~/") {
-		home, _ := os.UserHomeDir()
-		expanded = filepath.Join(home, expanded[2:])
-	}
-
+	expanded := expandHome(current)
 	dir := expanded
 	prefix := ""
 
-	// If the path doesn't end with /, treat the last component as a prefix filter
 	if !strings.HasSuffix(expanded, "/") {
 		dir = filepath.Dir(expanded)
 		prefix = filepath.Base(expanded)
 	}
 
+	return listDirSuggestions(dir, prefix, home)
+}
+
+func listDirSuggestions(dir, prefix, home string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -123,26 +156,27 @@ func pathSuggestions(current string) []string {
 
 	var suggestions []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		name := e.Name()
-		if strings.HasPrefix(name, ".") {
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(e.Name()), strings.ToLower(prefix)) {
 			continue
 		}
-		if prefix != "" && !strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)) {
-			continue
-		}
-		fullPath := filepath.Join(dir, name)
-		// Convert back to ~/... for display
-		if home, err := os.UserHomeDir(); err == nil {
-			if strings.HasPrefix(fullPath, home) {
-				fullPath = "~" + fullPath[len(home):]
-			}
+		fullPath := filepath.Join(dir, e.Name())
+		if home != "" && strings.HasPrefix(fullPath, home) {
+			fullPath = "~" + fullPath[len(home):]
 		}
 		suggestions = append(suggestions, fullPath)
 	}
 	return suggestions
+}
+
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
 }
 
 func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
@@ -151,8 +185,6 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 		switch p.focus {
 		case focusProjectList:
 			return p.updateProjectList(msg)
-		case focusName:
-			return p.updateNameInput(msg)
 		case focusPath:
 			return p.updatePathInput(msg)
 		case focusPresets:
@@ -160,19 +192,15 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 		}
 	}
 
-	// Forward to active text input for non-key messages (blink, etc.)
 	var cmd tea.Cmd
-	switch p.focus {
-	case focusName:
-		p.nameInput, cmd = p.nameInput.Update(msg)
-	case focusPath:
+	if p.focus == focusPath {
 		p.pathInput, cmd = p.pathInput.Update(msg)
 	}
 	return p, cmd
 }
 
 func (p projectPanel) updateProjectList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
-	totalItems := len(p.existingProjects) + 1 // +1 for "Create new..."
+	totalItems := len(p.existingProjects) + 1 // +1 for "New project..."
 
 	switch msg.String() {
 	case "up", "k":
@@ -185,68 +213,57 @@ func (p projectPanel) updateProjectList(msg tea.KeyMsg) (projectPanel, tea.Cmd) 
 		}
 	case "enter":
 		if p.projectCursor == len(p.existingProjects) {
-			// "Create new..." selected
-			p.showExisting = false
-			p.focus = focusName
-			p.nameInput.Focus()
+			// "New project..." selected → show path input
+			p.focus = focusPath
+			if p.pathInput.Value() == "" {
+				p.pathInput.SetValue("~/")
+				p.pathInput.SetSuggestions(pathSuggestions("~/"))
+			}
+			p.pathInput.Focus()
 			return p, textinput.Blink
 		}
 		// Load existing project
-		name := p.existingProjects[p.projectCursor]
-		cfgPath := filepath.Join(config.FleetDir(), "configs", name+".toml")
+		proj := p.existingProjects[p.projectCursor]
+		cfgPath := filepath.Join(config.FleetDir(), "configs", proj.name+".toml")
 		if cfg, err := config.Load(cfgPath); err == nil {
 			return p, func() tea.Msg {
 				return ProjectLoadedMsg{Config: cfg}
 			}
 		}
+		// Config file not found — emit selection for wizard_model to query relay
+		// Pre-fill path with ~/ if no path known, so autocomplete works immediately
+		if proj.path == "" && p.pathInput.Value() == "" {
+			p.pathInput.SetValue("~/")
+			p.pathInput.SetSuggestions(pathSuggestions("~/"))
+		}
+		return p, func() tea.Msg {
+			return ProjectSelectedMsg{Name: proj.name, Path: proj.path}
+		}
 	}
 	return p, nil
-}
-
-func (p projectPanel) updateNameInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		if len(p.existingProjects) > 0 {
-			// Go back to project list
-			p.showExisting = true
-			p.focus = focusProjectList
-			p.nameInput.Blur()
-			return p, nil
-		}
-	case "enter":
-		if strings.TrimSpace(p.nameInput.Value()) == "" {
-			return p, nil
-		}
-		p.focus = focusPath
-		p.nameInput.Blur()
-		p.pathInput.Focus()
-		// Auto-fill path with cwd if empty
-		if p.pathInput.Value() == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				p.pathInput.SetValue(cwd)
-			}
-		}
-		// Generate initial path suggestions
-		p.pathInput.SetSuggestions(pathSuggestions(p.pathInput.Value()))
-		return p, textinput.Blink
-	}
-	var cmd tea.Cmd
-	p.nameInput, cmd = p.nameInput.Update(msg)
-	return p, cmd
 }
 
 func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		// Go back to name input
-		p.focus = focusName
+		p.focus = focusProjectList
 		p.pathInput.Blur()
-		p.nameInput.Focus()
-		return p, textinput.Blink
+		return p, nil
 	case "enter":
-		if strings.TrimSpace(p.pathInput.Value()) == "" {
+		pathVal := strings.TrimSpace(p.pathInput.Value())
+		if pathVal == "" {
 			return p, nil
 		}
+		expanded := expandHome(pathVal)
+
+		// Only derive name from path for new projects (projName not already set)
+		if p.projName == "" {
+			p.projName = filepath.Base(expanded)
+		}
+
+		// Create directory if it doesn't exist
+		os.MkdirAll(expanded, 0755)
+
 		p.focus = focusPresets
 		p.pathInput.Blur()
 		p.ready = true
@@ -255,10 +272,7 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 
 	var cmd tea.Cmd
 	p.pathInput, cmd = p.pathInput.Update(msg)
-
-	// Update suggestions after each keystroke
 	p.pathInput.SetSuggestions(pathSuggestions(p.pathInput.Value()))
-
 	return p, cmd
 }
 
@@ -289,21 +303,38 @@ func (p projectPanel) View(active bool) string {
 		borderColor = lipgloss.Color("99")
 	}
 
-	// PROJECT section
 	sb.WriteString(dimStyle.Render("PROJECT") + "\n")
 
-	if p.showExisting && p.focus == focusProjectList {
-		// Show existing projects list
-		for i, name := range p.existingProjects {
+	if p.focus == focusProjectList {
+		// Project list
+		for i, proj := range p.existingProjects {
 			cursor := "  "
 			style := dimStyle
 			if i == p.projectCursor {
 				cursor = selectedStyle.Render("▸ ")
 				style = selectedStyle
 			}
-			sb.WriteString(cursor + style.Render(name) + "\n")
+			label := proj.name
+			if proj.path != "" {
+				home, _ := os.UserHomeDir()
+				short := proj.path
+				if home != "" && strings.HasPrefix(short, home) {
+					short = "~" + short[len(home):]
+				}
+				label += " " + dimStyle.Render(short)
+			}
+			sb.WriteString(cursor + style.Render(proj.name))
+			if proj.path != "" {
+				home, _ := os.UserHomeDir()
+				short := proj.path
+				if home != "" && strings.HasPrefix(short, home) {
+					short = "~" + short[len(home):]
+				}
+				sb.WriteString(" " + dimStyle.Render(short))
+			}
+			sb.WriteString("\n")
 		}
-		// "Create new..." sentinel
+		// "New project..." sentinel
 		idx := len(p.existingProjects)
 		cursor := "  "
 		style := dimStyle
@@ -311,37 +342,23 @@ func (p projectPanel) View(active bool) string {
 			cursor = selectedStyle.Render("▸ ")
 			style = selectedStyle
 		}
-		sb.WriteString(cursor + style.Render("+ Create new project...") + "\n")
+		sb.WriteString(cursor + style.Render("+ New project...") + "\n")
+	} else if p.focus == focusPath {
+		// Path input mode
+		sb.WriteString("  Path: " + p.pathInput.View() + "\n")
+		// Show auto-derived name preview
+		val := strings.TrimSpace(p.pathInput.Value())
+		if val != "" {
+			name := filepath.Base(expandHome(val))
+			sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(name) + dimStyle.Render(" (auto)") + "\n")
+		}
 	} else {
-		// New project input or confirmed values
-		if p.focus == focusName {
-			sb.WriteString("  Name: " + p.nameInput.View() + "\n")
-		} else {
-			name := p.nameInput.Value()
-			if name == "" {
-				name = dimStyle.Render("(not set)")
-			} else {
-				name = selectedStyle.Render(name)
-			}
-			sb.WriteString("  " + dimStyle.Render("Name: ") + name + "\n")
-		}
-
-		if p.focus == focusPath {
-			sb.WriteString("  Path: " + p.pathInput.View() + "\n")
-		} else {
-			path := p.pathInput.Value()
-			if path == "" {
-				path = dimStyle.Render("(not set)")
-			} else {
-				path = selectedStyle.Render(path)
-			}
-			sb.WriteString("  " + dimStyle.Render("Path: ") + path + "\n")
-		}
+		// Confirmed — show name + path
+		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
+		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
 	}
 
 	sb.WriteString("\n")
-
-	// PRESET section
 	sb.WriteString(dimStyle.Render("PRESET") + "\n")
 
 	if !p.ready {
@@ -359,7 +376,6 @@ func (p projectPanel) View(active bool) string {
 		}
 	}
 
-	// Apply border
 	panelStyle := lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderStyle(lipgloss.NormalBorder()).
@@ -375,16 +391,18 @@ func (p projectPanel) View(active bool) string {
 }
 
 func (p projectPanel) ProjectName() string {
-	return strings.TrimSpace(p.nameInput.Value())
+	if p.projName != "" {
+		return p.projName
+	}
+	val := strings.TrimSpace(p.pathInput.Value())
+	if val != "" {
+		return filepath.Base(expandHome(val))
+	}
+	return ""
 }
 
 func (p projectPanel) ProjectPath() string {
-	path := strings.TrimSpace(p.pathInput.Value())
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, path[2:])
-	}
-	return path
+	return expandHome(strings.TrimSpace(p.pathInput.Value()))
 }
 
 func (p projectPanel) IsReady() bool {

@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,10 +41,7 @@ func newWizardModel(relayClient *relay.Client) wizardModel {
 }
 
 func (m wizardModel) Init() tea.Cmd {
-	if m.project.showExisting {
-		return nil // project list is shown, no text input to focus
-	}
-	return m.project.nameInput.Focus()
+	return nil // starts on project list, no text input to focus
 }
 
 func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -62,20 +60,83 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ProjectLoadedMsg:
-		// Existing project loaded — populate everything from config
+		// Existing project with saved config
 		cfg := msg.Config
-		m.project.nameInput.SetValue(cfg.Project.Name)
+		m.project.projName = cfg.Project.Name
 		m.project.pathInput.SetValue(cfg.Project.Cwd)
 		m.project.ready = true
-		m.project.showExisting = false
 		m.project.focus = focusPresets
-		// Load agents from the saved config
+		// Load agents from saved config
 		var items []agentItem
 		for _, a := range cfg.Agents {
 			items = append(items, agentItem{agent: a, enabled: true})
 		}
+		// Also try relay for any agents not in the config
+		if m.relayClient != nil {
+			if relayAgents, err := m.relayClient.ListAgents(cfg.Project.Name); err == nil {
+				seen := make(map[string]bool)
+				for _, item := range items {
+					seen[item.agent.Name] = true
+				}
+				for _, ra := range relayAgents {
+					if !seen[ra.Name] {
+						color := ra.Color
+						if color == "" {
+							color = agentColors[len(items)%len(agentColors)]
+						}
+						items = append(items, agentItem{
+							agent: config.AgentConfig{
+								Name: ra.Name, Color: color, Role: ra.Role,
+								ReportsTo: ra.ReportsTo, IsExecutive: ra.IsExecutive,
+							},
+							enabled: true,
+						})
+					}
+				}
+			}
+		}
 		m.agents.SetAgents(items)
 		m.activePanel = panelRight
+		return m, nil
+
+	case ProjectSelectedMsg:
+		// Project known but no saved config — query relay for agents
+		m.project.projName = msg.Name
+		if msg.Path != "" {
+			display := msg.Path
+			if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(display, home) {
+				display = "~" + display[len(home):]
+			}
+			m.project.pathInput.SetValue(display)
+			m.project.ready = true
+			m.project.focus = focusPresets
+		} else {
+			m.project.focus = focusPath
+			m.project.pathInput.Focus()
+		}
+		// Query relay for existing agents
+		if m.relayClient != nil {
+			if relayAgents, err := m.relayClient.ListAgents(msg.Name); err == nil && len(relayAgents) > 0 {
+				var items []agentItem
+				for i, ra := range relayAgents {
+					color := ra.Color
+					if color == "" {
+						color = agentColors[i%len(agentColors)]
+					}
+					items = append(items, agentItem{
+						agent: config.AgentConfig{
+							Name: ra.Name, Color: color, Role: ra.Role,
+							ReportsTo: ra.ReportsTo, IsExecutive: ra.IsExecutive,
+						},
+						enabled: true,
+					})
+				}
+				m.agents.SetAgents(items)
+			}
+		}
+		if m.project.ready {
+			m.activePanel = panelRight
+		}
 		return m, nil
 
 	case PresetSelectedMsg:
@@ -153,7 +214,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// When in text input mode, delegate everything to the active component
-		isTextInput := (m.activePanel == panelLeft && (m.project.focus == focusName || m.project.focus == focusPath)) || m.drawerOpen
+		isTextInput := (m.activePanel == panelLeft && m.project.focus == focusPath) || m.drawerOpen
 
 		if !isTextInput {
 			switch keyMsg.String() {
@@ -236,8 +297,8 @@ func (m wizardModel) View() string {
 		help = "tab=field  j/k=select  enter=save  esc=cancel"
 	} else if m.project.focus == focusProjectList {
 		help = "j/k=move  enter=select  q=quit"
-	} else if m.activePanel == panelLeft && (m.project.focus == focusName || m.project.focus == focusPath) {
-		help = "type to enter  enter=confirm  esc=back  ctrl+c=quit"
+	} else if m.activePanel == panelLeft && m.project.focus == focusPath {
+		help = "type path  tab=autocomplete  enter=confirm  esc=back  ctrl+c=quit"
 	} else if m.activePanel == panelLeft {
 		help = "j/k=move  enter=select preset  tab=agents panel  q=quit"
 	} else {
