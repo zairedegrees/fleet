@@ -1,4 +1,4 @@
-module github.com/nazaire/fleet
+module github.com/zairedegrees/fleet
 
 go 1.26.1
 

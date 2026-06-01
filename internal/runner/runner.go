@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nazaire/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/config"
 )
 
 type LaunchResult struct {
@@ -20,12 +20,13 @@ type LaunchResult struct {
 }
 
 // CreateSessions creates tmux sessions and launches Claude Code in each.
-// Returns immediately — does NOT wait for Claude to boot.
-func CreateSessions(cfg *config.FleetConfig) []LaunchResult {
+// Returns immediately — does NOT wait for Claude to boot. claudeBin is the
+// resolved absolute path to the Claude Code binary (see config.ResolveBin).
+func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 	var results []LaunchResult
 	project := cfg.Project.Name
 
-	claudeCmd := "claude"
+	claudeCmd := claudeBin
 	for _, f := range cfg.Claude.Flags {
 		claudeCmd += " " + f
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/nazaire/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/config"
 )
 
 // DrawerSaveMsg is sent when the drawer saves an agent.

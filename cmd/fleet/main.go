@@ -8,11 +8,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/nazaire/fleet/internal/config"
-	"github.com/nazaire/fleet/internal/doctor"
-	"github.com/nazaire/fleet/internal/relay"
-	"github.com/nazaire/fleet/internal/runner"
-	"github.com/nazaire/fleet/internal/wizard"
+	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/doctor"
+	"github.com/zairedegrees/fleet/internal/relay"
+	"github.com/zairedegrees/fleet/internal/runner"
+	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
 const defaultRelayURL = "http://localhost:8090/mcp"
@@ -102,7 +102,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run()
+	checks := doctor.Run(defaultRelayURL)
 	doctor.Print(checks)
 	return nil
 }
@@ -305,7 +305,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		ReportsTo: reportsTo,
 	}
 
-	claudeCmd := "claude"
+	claudeBin, err := cfg.Claude.ResolveBin()
+	if err != nil {
+		return err
+	}
+	claudeCmd := claudeBin
 	for _, f := range cfg.Claude.Flags {
 		claudeCmd += " " + f
 	}
@@ -416,6 +420,13 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
+	claudeBin, err := cfg.Claude.ResolveBin()
+	if err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
+		return err
+	}
+
 	relayClient := relay.NewClient(cfg.Project.RelayURL)
 	if err := relayClient.Health(); err != nil {
 		fmt.Printf("  ✗ Relay unreachable at %s\n", cfg.Project.RelayURL)
@@ -433,7 +444,7 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	fmt.Print("\n  🚀 Launching fleet...\n\n")
 
 	// Phase 1: Create tmux sessions + launch claude (fast)
-	results := runner.CreateSessions(cfg)
+	results := runner.CreateSessions(cfg, claudeBin)
 
 	success := 0
 	for _, r := range results {

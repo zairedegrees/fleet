@@ -1,6 +1,6 @@
 package wizard
 
-import "github.com/nazaire/fleet/internal/config"
+import "github.com/zairedegrees/fleet/internal/config"
 
 // Preset represents a pre-defined team configuration.
 type Preset struct {

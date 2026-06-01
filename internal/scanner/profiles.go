@@ -1,6 +1,6 @@
 package scanner
 
-import "github.com/nazaire/fleet/internal/config"
+import "github.com/zairedegrees/fleet/internal/config"
 
 // AgentSuggestion is a proposed agent for the fleet.
 type AgentSuggestion struct {

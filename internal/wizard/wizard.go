@@ -5,8 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/nazaire/fleet/internal/config"
-	"github.com/nazaire/fleet/internal/relay"
+	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 var errCancelled = fmt.Errorf("cancelled")

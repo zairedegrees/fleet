@@ -204,3 +204,45 @@ func TestLoadLastSymlink(t *testing.T) {
 		t.Errorf("got %q, want %q", loaded.Project.Name, "my-project")
 	}
 }
+
+func TestResolveClaudeBin(t *testing.T) {
+	// explicit existing path is returned as-is
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "myclaude")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ClaudeConfig{Bin: fake}.ResolveBin()
+	if err != nil {
+		t.Fatalf("explicit path: %v", err)
+	}
+	if got != fake {
+		t.Errorf("explicit path: got %q, want %q", got, fake)
+	}
+
+	// explicit missing path errors (does not silently fall back to PATH)
+	if _, err := (ClaudeConfig{Bin: filepath.Join(dir, "nope")}).ResolveBin(); err == nil {
+		t.Error("expected error for missing explicit path")
+	}
+
+	// empty Bin resolves "claude" from PATH to an absolute path
+	pdir := t.TempDir()
+	onPath := filepath.Join(pdir, "claude")
+	if err := os.WriteFile(onPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pdir)
+	got, err = ClaudeConfig{}.ResolveBin()
+	if err != nil {
+		t.Fatalf("PATH lookup: %v", err)
+	}
+	if got != onPath {
+		t.Errorf("PATH lookup: got %q, want %q", got, onPath)
+	}
+
+	// empty Bin + claude not on PATH errors with a clear message
+	t.Setenv("PATH", t.TempDir())
+	if _, err := (ClaudeConfig{}).ResolveBin(); err == nil {
+		t.Error("expected error when claude is not on PATH")
+	}
+}

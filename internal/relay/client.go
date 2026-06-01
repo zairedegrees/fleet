@@ -44,10 +44,16 @@ type mpcResponse struct {
 }
 
 func NewClient(url string) *Client {
+	return NewClientWithTimeout(url, 10*time.Second)
+}
+
+// NewClientWithTimeout builds a client with a custom HTTP timeout. Used by
+// callers that need a snappier probe than the default (e.g. the doctor).
+func NewClientWithTimeout(url string, timeout time.Duration) *Client {
 	return &Client{
 		url: url,
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: timeout,
 		},
 	}
 }

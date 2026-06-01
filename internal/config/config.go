@@ -3,8 +3,10 @@ package config
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -22,7 +24,37 @@ type ProjectConfig struct {
 }
 
 type ClaudeConfig struct {
+	Bin   string   `toml:"bin,omitempty"`
 	Flags []string `toml:"flags"`
+}
+
+// ResolveBin returns the absolute path to the Claude Code binary fleet should
+// launch. If Bin is set it is used (supporting ~ expansion and explicit paths);
+// otherwise "claude" is looked up on PATH. Resolving to an absolute path here,
+// in fleet's own environment which carries the user's shell PATH, means the
+// spawned tmux shells do not need claude on their own PATH.
+func (c ClaudeConfig) ResolveBin() (string, error) {
+	bin := c.Bin
+	if bin == "" {
+		bin = "claude"
+	}
+	if strings.HasPrefix(bin, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			bin = filepath.Join(home, bin[2:])
+		}
+	}
+	if strings.Contains(bin, "/") {
+		info, err := os.Stat(bin)
+		if err != nil || info.IsDir() {
+			return "", fmt.Errorf("claude binary not found at %q", bin)
+		}
+		return bin, nil
+	}
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return "", fmt.Errorf("claude binary %q not found on PATH (install Claude Code, or set [claude] bin in the config)", bin)
+	}
+	return path, nil
 }
 
 type AgentConfig struct {

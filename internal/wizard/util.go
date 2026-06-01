@@ -3,7 +3,7 @@ package wizard
 import (
 	"strings"
 
-	"github.com/nazaire/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/config"
 )
 
 // agentColors is the palette for agent color assignment.

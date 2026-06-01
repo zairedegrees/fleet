@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/nazaire/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/config"
 )
 
 // Messages emitted by the agents panel for the parent model to handle.

@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
+
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 type Check struct {
@@ -14,11 +17,11 @@ type Check struct {
 	FixCmd string
 }
 
-func Run() []Check {
+func Run(relayURL string) []Check {
 	return []Check{
 		checkTmux(),
 		checkClaude(),
-		checkRelay(),
+		checkRelay(relayURL),
 		checkITerm2(),
 	}
 }
@@ -51,17 +54,20 @@ func checkClaude() Check {
 	return c
 }
 
-func checkRelay() Check {
+func checkRelay(relayURL string) Check {
 	c := Check{Name: "wrai.th relay"}
-	_, err := exec.Command("curl", "-s", "-f", "http://localhost:8090/mcp").Output()
-	if err != nil {
+	// The /mcp endpoint is an SSE stream: a bare GET never closes the body and
+	// would hang forever. Probe it the way the rest of fleet does instead, with
+	// a bounded JSON-RPC tools/call (Health), so a streaming relay can't block us.
+	client := relay.NewClientWithTimeout(relayURL, 3*time.Second)
+	if err := client.Health(); err != nil {
 		c.Status = "error"
-		c.Detail = "relay not reachable at localhost:8090"
+		c.Detail = "relay not reachable at " + relayURL
 		c.FixCmd = "Start wrai.th relay server"
 		return c
 	}
 	c.Status = "ok"
-	c.Detail = "http://localhost:8090"
+	c.Detail = relayURL
 	return c
 }
 
