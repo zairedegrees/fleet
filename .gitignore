@@ -1,1 +1,13 @@
+# Binaries
 /fleet
+/fleet-v1
+*.exe
+*.out
+*.test
+/dist/
+
+# Runtime state (not source)
+.superpowers/
+.claude/worktrees/
+*.pid
+*.log
