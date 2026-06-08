@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +17,10 @@ import (
 )
 
 const defaultRelayURL = "http://localhost:8090/mcp"
+
+// loadLastConfig is a seam over config.LoadLast so command behavior around a
+// missing/corrupt last config can be unit-tested.
+var loadLastConfig = config.LoadLast
 
 var (
 	flagLast    bool
@@ -108,9 +113,9 @@ func runDoctor() error {
 }
 
 func runKill() error {
-	cfg, err := config.LoadLast()
+	cfg, err := loadLastConfig()
 	if err != nil {
-		return runKillAll()
+		return fmt.Errorf("no saved fleet config found for --kill; use --kill-all to stop every project's sessions")
 	}
 
 	// Auto-save before killing
@@ -415,6 +420,23 @@ func runWizard() error {
 	return launch(result.Config, result.Save)
 }
 
+// reportLaunchResults writes each failed agent's error to w and returns a
+// non-nil error if any agent failed to launch. Without this a partial launch
+// was reported as success with exit code 0, hiding orphaned/missing sessions.
+func reportLaunchResults(w io.Writer, results []runner.LaunchResult) error {
+	failed := 0
+	for _, r := range results {
+		if !r.Success {
+			failed++
+			fmt.Fprintf(w, "  ✗ %s failed: %v\n", r.Agent, r.Error)
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d/%d agent(s) failed to launch", failed, len(results))
+	}
+	return nil
+}
+
 func launch(cfg *config.FleetConfig, save bool) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
@@ -446,6 +468,8 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	// Phase 1: Create tmux sessions + launch claude (fast)
 	results := runner.CreateSessions(cfg, claudeBin)
 
+	launchErr := reportLaunchResults(os.Stderr, results)
+
 	success := 0
 	for _, r := range results {
 		if r.Success {
@@ -464,7 +488,11 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	// (fleet exits, script waits for prompts and sends init commands)
 	runner.ConfigureAgentsAsync(cfg)
 
-	fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
+	if launchErr != nil {
+		fmt.Printf("\n  ⚠ Fleet partially launched: %d/%d sessions created.\n", success, len(cfg.Agents))
+	} else {
+		fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
+	}
 	fmt.Print("  Agents configuring in background (watch iTerm2 panes).\n\n")
-	return nil
+	return launchErr
 }

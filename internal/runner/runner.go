@@ -90,6 +90,23 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 		relayURL = "http://localhost:8090/mcp"
 	}
 
+	os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, relayURL, logPath)), 0755)
+
+	// Generate wake.sh — lets the boss agent wake other agents from Claude Code
+	// Usage: ! bash ~/.fleet/wake.sh <agent-name>
+	generateWakeScript(cfg)
+
+	// Launch as detached process — survives fleet exit
+	cmd := exec.Command("bash", scriptPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Start()
+}
+
+// buildConfigureScript returns the bash script that configures each agent after
+// Claude boots: rename/color, relay register + profile_slug, vault injection, and
+// — only for agents with AutoTalk=true — the continuous `/relay talk` poll loop.
+// Kept pure (reads only vault docs) so the talk-gating logic is unit-testable.
+func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) string {
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
 	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
@@ -166,7 +183,7 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 			script.WriteString(fmt.Sprintf("  echo 'vault injected for %s: %d docs'\n", agent.Name, len(docs)))
 		}
 
-		if !agent.IsExecutive {
+		if agent.AutoTalk {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
 			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter\n", session))
 		}
@@ -179,16 +196,7 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 
 	script.WriteString("echo 'all agents configured'\n")
 
-	os.WriteFile(scriptPath, []byte(script.String()), 0755)
-
-	// Generate wake.sh — lets the boss agent wake other agents from Claude Code
-	// Usage: ! bash ~/.fleet/wake.sh <agent-name>
-	generateWakeScript(cfg)
-
-	// Launch as detached process — survives fleet exit
-	cmd := exec.Command("bash", scriptPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Start()
+	return script.String()
 }
 
 // generateWakeScript creates ~/.fleet/wake.sh for boss agents to wake workers.

