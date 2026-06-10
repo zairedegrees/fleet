@@ -270,6 +270,45 @@ func installFakeSessions(t *testing.T, sessions []string) *int {
 	return &kills
 }
 
+// A failed tmux listing must surface as an error — swallowing it and reporting
+// "no sessions" would hide a broken tmux behind a clean exit.
+func TestKillAllSurfacesListError(t *testing.T) {
+	origList, origKill := listFleetSessions, killAllFleetSessions
+	t.Cleanup(func() { listFleetSessions, killAllFleetSessions = origList, origKill })
+	listFleetSessions = func() ([]string, error) { return nil, errors.New("tmux exploded") }
+	kills := 0
+	killAllFleetSessions = func() error { kills++; return nil }
+
+	var out, errOut bytes.Buffer
+	err := killAll(strings.NewReader("y\n"), &out, &errOut, false)
+	if err == nil || !strings.Contains(err.Error(), "tmux exploded") {
+		t.Fatalf("the tmux list error must surface with its cause, got: %v", err)
+	}
+	if kills != 0 {
+		t.Error("a failed listing must not kill anything")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("a failed listing must not prompt, got: %q", out.String())
+	}
+}
+
+// The accepted confirmation tokens are exactly "y" and "yes", case-insensitive
+// and trimmed — anything else (EOF, "n", prefixes, other words) is a No.
+func TestConfirmYesTokenSet(t *testing.T) {
+	accepted := []string{"y\n", "Y\n", "yes\n", "YES\n", "Yes\n", "  y  \n", "\tyes\n", "y"}
+	for _, in := range accepted {
+		if !confirmYes(strings.NewReader(in)) {
+			t.Errorf("input %q must be accepted", in)
+		}
+	}
+	rejected := []string{"", "\n", "n\n", "N\n", "no\n", "ye\n", "yess\n", "yes please\n", "y n\n", "oui\n", "1\n", "true\n"}
+	for _, in := range rejected {
+		if confirmYes(strings.NewReader(in)) {
+			t.Errorf("input %q must be rejected", in)
+		}
+	}
+}
+
 // --kill-all without --force must ask for y/N confirmation and abort on "n" —
 // it kills every project's sessions, the audit demanded confirm-by-default.
 // An abort is NOT a success: it must exit non-zero with an actionable stderr
