@@ -186,6 +186,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	agent := args[0]
 	follow, _ := cmd.Flags().GetBool("follow")
 	lines, _ := cmd.Flags().GetInt("lines")
+	if lines < 1 {
+		return fmt.Errorf("--lines must be at least 1, got %d", lines)
+	}
 
 	cfg, err := config.LoadLast()
 	if err != nil {
@@ -203,21 +206,22 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if !follow {
-		fmt.Print(tailLines(output, lines))
+		fmt.Println(tailLines(output, lines))
 		return nil
 	}
 
-	header := logsHeader(project, agent)
-	fmt.Print(header)
-	fmt.Print(tailLines(output, lines))
-
 	return followPane(os.Stdout, func() (string, error) {
 		return runner.CapturePane(project, agent)
-	}, agent, header, output, lines, 1*time.Second)
+	}, agent, logsHeader(project, agent), output, lines, 1*time.Second)
 }
 
 func tailLines(output string, n int) string {
-	allLines := strings.Split(output, "\n")
+	if n <= 0 {
+		return ""
+	}
+	// capture-pane output ends with a newline; without this trim the trailing
+	// empty element eats one of the n requested lines.
+	allLines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 	if len(allLines) > n {
 		allLines = allLines[len(allLines)-n:]
 	}
@@ -229,6 +233,10 @@ func logsHeader(project, agent string) string {
 }
 
 func followPane(w io.Writer, capture func() (string, error), agent, header, initial string, lines int, interval time.Duration) error {
+	// Clear once so the initial frame and every \033[H refresh share the same
+	// top-left origin instead of interleaving with the shell scrollback.
+	fmt.Fprint(w, "\033[2J\033[H")
+	writeFrame(w, header, tailLines(initial, lines))
 	prev := initial
 	for {
 		time.Sleep(interval)
@@ -238,11 +246,17 @@ func followPane(w io.Writer, capture func() (string, error), agent, header, init
 		}
 		if current != prev {
 			fmt.Fprint(w, "\033[H")
-			fmt.Fprint(w, header)
-			fmt.Fprint(w, tailLines(current, lines))
+			writeFrame(w, header, tailLines(current, lines))
 			prev = current
 		}
 	}
+}
+
+// writeFrame draws header+frame, erasing each line's leftover tail (\033[K)
+// and everything below the frame (\033[J) so a redraw shorter than the
+// previous one leaves no stale characters on screen.
+func writeFrame(w io.Writer, header, frame string) {
+	fmt.Fprint(w, strings.ReplaceAll(header+frame, "\n", "\033[K\n"), "\033[J")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
