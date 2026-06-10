@@ -261,6 +261,27 @@ func TestRenderUsageUnknowns(t *testing.T) {
 	}
 }
 
+// The "?" rendering is keyed on the -1 sentinel itself, not on the warning
+// text: a -1 live count must never render as "-1 registered", warning or not.
+func TestRenderUsageUnknownLiveStateWithoutWarning(t *testing.T) {
+	out := renderUsage([]projectUsage{{
+		Project:    "demo",
+		RelayURL:   "http://x/mcp",
+		Agents:     2,
+		Registered: -1,
+		Active:     -1,
+		Tasks:      -1,
+		VaultBytes: 0,
+		VaultDocs:  0,
+	}})
+	if !strings.Contains(out, "live (relay):    ?") {
+		t.Errorf("-1 live counts must render '?' even without a warning, got:\n%s", out)
+	}
+	if strings.Contains(out, "-1") {
+		t.Errorf("the -1 sentinel must never leak into the output, got:\n%s", out)
+	}
+}
+
 // Relay up but a task total that could not be fetched: registered/active are
 // real, the task total is an honest "?".
 func TestRenderUsageUnknownTasksOnly(t *testing.T) {
