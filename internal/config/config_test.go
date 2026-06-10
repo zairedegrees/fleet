@@ -144,6 +144,30 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: "",
 		},
+		{
+			name: "real french role with em-dash and ampersand is allowed",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "nazaire", Color: "green", Role: "Executive — project owner, strategy & architecture decisions"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "role with accents is allowed",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Développeur généraliste bot météo Polymarket"}},
+			},
+			wantErr: "",
+		},
+		{
+			name: "role with command substitution is rejected",
+			cfg: FleetConfig{
+				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "x $(whoami)"}},
+			},
+			wantErr: "invalid role",
+		},
 	}
 
 	for _, tt := range tests {

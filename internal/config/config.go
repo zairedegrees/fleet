@@ -68,11 +68,12 @@ type AgentConfig struct {
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-// validRole bounds the free-text agent role to characters that are safe in every
-// sink it reaches: single/double-quoted bash, tmux send-keys, curl JSON, and
-// AppleScript. It allows letters, digits, spaces and harmless punctuation (the
-// "/" in roles like "CI/CD") while rejecting quotes, $, backticks, ;, |, &, etc.
-var validRole = regexp.MustCompile(`^[a-zA-Z0-9 ,./_-]*$`)
+// unsafeRoleChars are the only characters forbidden in a free-text agent role:
+// those that can break out of the quoting in the sinks the role reaches
+// (single/double-quoted bash, tmux send-keys, curl JSON). Everything else —
+// including accents, em-dashes, "&" and ordinary punctuation — stays inert
+// inside the quotes and is allowed, so international prose roles work.
+const unsafeRoleChars = "\"'`$\\\n\r\t"
 
 var validColors = map[string]bool{
 	"green": true, "orange": true, "blue": true, "red": true,
@@ -113,7 +114,7 @@ func (cfg *FleetConfig) Validate() error {
 		if !validName.MatchString(a.Name) {
 			return fmt.Errorf("invalid agent name %q: must be alphanumeric with hyphens/underscores", a.Name)
 		}
-		if !validRole.MatchString(a.Role) {
+		if strings.ContainsAny(a.Role, unsafeRoleChars) {
 			return fmt.Errorf("invalid role %q for agent %q: contains unsafe characters", a.Role, a.Name)
 		}
 		if !validColors[a.Color] {
