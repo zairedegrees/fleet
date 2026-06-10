@@ -78,7 +78,7 @@ func runStatus() error {
 		defaultURL = cfg.Project.RelayURL
 	}
 
-	projects, warning := buildStatus(sessions, loadSavedConfigs(), defaultURL)
+	projects, warning := buildStatus(sessions, loadSavedConfigs(), defaultURL, flagRelayURL)
 	if len(sessions) == 0 && len(projects) == 0 {
 		if warning != "" {
 			fmt.Printf("  ⚠ %s\n\n", warning)
@@ -95,8 +95,9 @@ func runStatus() error {
 // agents and dot-projects group under the real project the relay was
 // registered with; sessions matching no known project render an honest "?".
 // Known projects are queried on their own relay URL even with zero sessions,
-// so relay-only ghosts stay visible.
-func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL string) ([]projectStatus, string) {
+// so relay-only ghosts stay visible. A non-empty override (--relay-url) beats
+// every per-project resolution.
+func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL, override string) ([]projectStatus, string) {
 	var knownNames []string
 	for _, c := range configs {
 		knownNames = append(knownNames, c.Project.Name)
@@ -136,7 +137,10 @@ func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL st
 			continue
 		}
 
-		url := relayURLFor(project, configs, defaultURL)
+		url := override
+		if url == "" {
+			url = relayURLFor(project, configs, defaultURL)
+		}
 		client, ok := clients[url]
 		if !ok {
 			client = newStatusClient(url)
