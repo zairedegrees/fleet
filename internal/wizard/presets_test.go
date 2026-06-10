@@ -55,5 +55,8 @@ func TestPresetAgentItems(t *testing.T) {
 		if !item.enabled {
 			t.Errorf("expected all items enabled, %s is not", item.agent.Name)
 		}
+		if item.agent.AutoTalk {
+			t.Errorf("preset agent %s must default to AutoTalk=false", item.agent.Name)
+		}
 	}
 }
