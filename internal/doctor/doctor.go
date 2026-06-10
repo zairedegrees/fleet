@@ -11,6 +11,9 @@ import (
 	"github.com/zairedegrees/fleet/internal/relay"
 )
 
+// execCommand is the seam tests swap to intercept external probes.
+var execCommand = exec.Command
+
 type Check struct {
 	Name   string
 	Status string // "ok", "missing", "error"
@@ -46,7 +49,7 @@ func installHint(goos, pkg string) string {
 }
 
 func checkTmux(goos string) Check {
-	out, err := exec.Command("tmux", "-V").Output()
+	out, err := execCommand("tmux", "-V").Output()
 	return tmuxCheck(goos, strings.TrimSpace(string(out)), err)
 }
 
@@ -67,7 +70,7 @@ func tmuxCheck(goos, version string, probeErr error) Check {
 
 func checkClaude() Check {
 	c := Check{Name: "claude"}
-	out, err := exec.Command("claude", "--version").Output()
+	out, err := execCommand("claude", "--version").Output()
 	if err != nil {
 		c.Status = "missing"
 		c.Detail = "Claude Code CLI not installed"
