@@ -4,8 +4,194 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
 )
+
+// fakeQuerier stands in for the relay client so the status pipeline is
+// testable without a relay.
+type fakeQuerier struct {
+	agents     map[string][]relay.Agent
+	counts     map[string]int // key: project + "/" + profile
+	listErr    error
+	countErr   error
+	listCalls  []string
+	countCalls []string
+}
+
+func (f *fakeQuerier) ListAgents(project string) ([]relay.Agent, error) {
+	f.listCalls = append(f.listCalls, project)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.agents[project], nil
+}
+
+func (f *fakeQuerier) CountActiveTasks(project, profile string) (int, error) {
+	key := project + "/" + profile
+	f.countCalls = append(f.countCalls, key)
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+	return f.counts[key], nil
+}
+
+func installFakeRelay(t *testing.T, f *fakeQuerier) {
+	t.Helper()
+	orig := newStatusClient
+	t.Cleanup(func() { newStatusClient = orig })
+	newStatusClient = func(url string) relayQuerier { return f }
+}
+
+func projectConfigs(names ...string) []*config.FleetConfig {
+	var cfgs []*config.FleetConfig
+	for _, n := range names {
+		cfgs = append(cfgs, &config.FleetConfig{Project: config.ProjectConfig{Name: n}})
+	}
+	return cfgs
+}
+
+// P1-A: agent names contain dashes (ux-designer ships in 3/5 presets), so a
+// session must resolve against KNOWN project names — never by guessing on the
+// last dash.
+func TestResolveSessionDashNamedAgent(t *testing.T) {
+	project, agent, known := resolveSession("fleet-demo-ux-designer", []string{"demo"})
+	if !known || project != "demo" || agent != "ux-designer" {
+		t.Errorf("expected demo/ux-designer (known), got %s/%s known=%v", project, agent, known)
+	}
+}
+
+// P1-A: dot-projects are sanitized one-way for tmux (v1stud.io → v1stud-io),
+// so the resolver must map the session back to the REAL project name — that is
+// the name the relay was registered with.
+func TestResolveSessionDotProject(t *testing.T) {
+	project, agent, known := resolveSession("fleet-v1stud-io-dev", []string{"v1stud.io"})
+	if !known || project != "v1stud.io" || agent != "dev" {
+		t.Errorf("expected v1stud.io/dev (known), got %s/%s known=%v", project, agent, known)
+	}
+}
+
+func TestResolveSessionLongestPrefixWins(t *testing.T) {
+	project, agent, known := resolveSession("fleet-demo-ux-designer", []string{"demo", "demo-ux"})
+	if !known || project != "demo-ux" || agent != "designer" {
+		t.Errorf("expected demo-ux/designer (known), got %s/%s known=%v", project, agent, known)
+	}
+}
+
+func TestResolveSessionUnknownProject(t *testing.T) {
+	project, agent, known := resolveSession("fleet-mystery-agent", []string{"demo"})
+	if known {
+		t.Fatalf("unknown session must not claim a known project, got %s/%s", project, agent)
+	}
+	if project != "mystery" || agent != "agent" {
+		t.Errorf("fallback should guess on the last dash, got %s/%s", project, agent)
+	}
+}
+
+// P1-A end-to-end: session fleet-demo-ux-designer with known project "demo"
+// must render ONE agent ux-designer with its relay state — not a bogus
+// project demo-ux with an "unregistered" agent plus a ghost (double lie).
+func TestBuildStatusDashAgentResolvesAgainstKnownProject(t *testing.T) {
+	fake := &fakeQuerier{
+		agents: map[string][]relay.Agent{"demo": {{Name: "ux-designer", Status: "active"}}},
+		counts: map[string]int{"demo/ux-designer": 1},
+	}
+	installFakeRelay(t, fake)
+
+	projects, warning := buildStatus([]string{"fleet-demo-ux-designer"}, projectConfigs("demo"), defaultRelayURL)
+	if warning != "" {
+		t.Fatalf("unexpected warning: %q", warning)
+	}
+	if len(projects) != 1 || projects[0].Project != "demo" {
+		t.Fatalf("expected single project demo, got %+v", projects)
+	}
+	agents := projects[0].Agents
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent (no ghost), got %+v", agents)
+	}
+	a := agents[0]
+	if a.Agent != "ux-designer" || !a.HasSession || a.RelayState != "active" || a.Tasks != 1 {
+		t.Errorf("expected ux-designer with session + relay state + count, got %+v", a)
+	}
+	for _, p := range fake.listCalls {
+		if p != "demo" {
+			t.Errorf("relay must only be queried with the real project name, got %q", p)
+		}
+	}
+}
+
+// P1-A: relay queries for a dot-project must use the REAL name (registration
+// uses the raw project name), and the group label stays the real name too.
+func TestBuildStatusDotProjectQueriesRealName(t *testing.T) {
+	fake := &fakeQuerier{
+		agents: map[string][]relay.Agent{"v1stud.io": {{Name: "dev", Status: "active"}}},
+		counts: map[string]int{"v1stud.io/dev": 2},
+	}
+	installFakeRelay(t, fake)
+
+	projects, _ := buildStatus([]string{"fleet-v1stud-io-dev"}, projectConfigs("v1stud.io"), defaultRelayURL)
+	if len(projects) != 1 || projects[0].Project != "v1stud.io" {
+		t.Fatalf("expected project group v1stud.io, got %+v", projects)
+	}
+	a := projects[0].Agents[0]
+	if a.Agent != "dev" || a.RelayState != "active" || a.Tasks != 2 {
+		t.Errorf("expected dev with relay state + count, got %+v", a)
+	}
+	if len(fake.listCalls) == 0 || fake.listCalls[0] != "v1stud.io" {
+		t.Errorf("relay must be queried with the real project name, got %v", fake.listCalls)
+	}
+}
+
+// P1-A: a session matching no known project gets an honest "?" — never
+// "unregistered" — and the relay is never queried with a guessed name.
+func TestBuildStatusUnknownSessionIsHonest(t *testing.T) {
+	fake := &fakeQuerier{}
+	installFakeRelay(t, fake)
+
+	projects, _ := buildStatus([]string{"fleet-mystery-agent"}, projectConfigs("demo"), defaultRelayURL)
+	var found *agentStatus
+	for i := range projects {
+		for j := range projects[i].Agents {
+			if projects[i].Agents[j].Session == "fleet-mystery-agent" {
+				found = &projects[i].Agents[j]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatalf("unknown session must still be listed, got %+v", projects)
+	}
+	if found.RelayState != relayStateUnknown {
+		t.Errorf("unknown session must show %q, got %q", relayStateUnknown, found.RelayState)
+	}
+	if found.Tasks != -1 {
+		t.Errorf("unknown session has no task count, expected -1, got %d", found.Tasks)
+	}
+	for _, p := range fake.listCalls {
+		if p == "mystery" {
+			t.Errorf("relay must not be queried with a guessed project name, got %v", fake.listCalls)
+		}
+	}
+}
+
+// The "?" state renders as an honest unknown without a task count.
+func TestRenderStatusUnknownRelayState(t *testing.T) {
+	projects := []projectStatus{
+		{
+			Project: "mystery",
+			Agents: []agentStatus{
+				{Session: "fleet-mystery-agent", Agent: "agent", RelayState: relayStateUnknown, Tasks: -1, HasSession: true},
+			},
+		},
+	}
+
+	out := renderStatus(projects, 1, "")
+	if !strings.Contains(out, "fleet-mystery-agent  [relay: ?]") {
+		t.Errorf("expected honest unknown relay state, got: %q", out)
+	}
+	if strings.Contains(out, "unregistered") || strings.Contains(out, "task") {
+		t.Errorf("unknown state must not assert registration or tasks, got: %q", out)
+	}
+}
 
 // mergeAgents unions the tmux view with the relay view: a session registered on
 // the relay carries the relay status + task count, a session unknown to the
