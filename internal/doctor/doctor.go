@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,25 +19,49 @@ type Check struct {
 }
 
 func Run(relayURL string) []Check {
-	return []Check{
-		checkTmux(),
+	return run(relayURL, runtime.GOOS)
+}
+
+func run(relayURL, goos string) []Check {
+	checks := []Check{
+		checkTmux(goos),
 		checkClaude(),
 		checkRelay(relayURL),
-		checkITerm2(),
+	}
+	if goos == "darwin" {
+		checks = append(checks, checkITerm2())
+	}
+	return checks
+}
+
+func installHint(goos, pkg string) string {
+	switch goos {
+	case "darwin":
+		return "brew install " + pkg
+	case "linux":
+		return "sudo apt install " + pkg
+	default:
+		return "install " + pkg + " with your system package manager"
 	}
 }
 
-func checkTmux() Check {
-	c := Check{Name: "tmux"}
+func checkTmux(goos string) Check {
 	out, err := exec.Command("tmux", "-V").Output()
-	if err != nil {
+	return tmuxCheck(goos, strings.TrimSpace(string(out)), err)
+}
+
+// tmuxCheck builds the tmux check result from the probe outcome; pure so the
+// goos → installHint wiring is testable without touching PATH.
+func tmuxCheck(goos, version string, probeErr error) Check {
+	c := Check{Name: "tmux"}
+	if probeErr != nil {
 		c.Status = "missing"
 		c.Detail = "tmux not installed"
-		c.FixCmd = "brew install tmux"
+		c.FixCmd = installHint(goos, "tmux")
 		return c
 	}
 	c.Status = "ok"
-	c.Detail = strings.TrimSpace(string(out))
+	c.Detail = version
 	return c
 }
 

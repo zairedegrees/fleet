@@ -185,6 +185,41 @@ func (c *Client) DispatchTask(agent, project, description string) error {
 	return err
 }
 
+// taskCountLimit is sent explicitly because the relay computes `count` AFTER
+// truncating the tasks array to `limit` (default 50) — without it, counts
+// silently cap at 50.
+const taskCountLimit = 500
+
+// CountActiveTasks returns the number of non-done/cancelled tasks routed to a
+// profile slug. Backs `fleet --status` — the relay task board is the source of
+// truth for agent workload, not the tmux pane content.
+func (c *Client) CountActiveTasks(project, profile string) (int, error) {
+	data, err := c.call("list_tasks", map[string]interface{}{
+		"project": project,
+		"profile": profile,
+		"status":  "active",
+		"limit":   taskCountLimit,
+	})
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return 0, err
+	}
+	// count mirrors len(tasks) after the limit is applied — trust it when
+	// present, fall back to the page length otherwise.
+	if result.Count > 0 {
+		return result.Count, nil
+	}
+	return len(result.Tasks), nil
+}
+
 func (c *Client) Health() error {
 	_, err := c.call("list_orgs", map[string]interface{}{})
 	return err

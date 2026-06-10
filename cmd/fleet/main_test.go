@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -73,6 +74,166 @@ func TestRunAddRejectsInvalidAgentBeforeTouchingTmux(t *testing.T) {
 	err := runAdd(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid agent name") {
 		t.Errorf("expected validation to reject the invalid name, got: %v", err)
+	}
+}
+
+func TestTailLines(t *testing.T) {
+	if got := tailLines("a\nb\nc\nd", 2); got != "c\nd" {
+		t.Errorf("tailLines should keep the last n lines, got %q", got)
+	}
+	if got := tailLines("a\nb", 5); got != "a\nb" {
+		t.Errorf("tailLines should keep everything when shorter than n, got %q", got)
+	}
+}
+
+// Real capture-pane output ends with a newline; the trailing empty element
+// after the split must not eat one of the requested lines (-n 50 showed 49).
+func TestTailLinesTrailingNewlineKeepsFullCount(t *testing.T) {
+	if got := tailLines("a\nb\nc\n", 2); got != "b\nc" {
+		t.Errorf("want the last 2 real lines \"b\\nc\", got %q", got)
+	}
+	if got := tailLines("a\nb\nc\n", 3); got != "a\nb\nc" {
+		t.Errorf("want all 3 real lines, got %q", got)
+	}
+}
+
+// `fleet logs -n -5 dev` reached tailLines with a negative n and panicked on
+// the slice bound; non-positive n must yield no lines instead.
+func TestTailLinesClampsNonPositiveN(t *testing.T) {
+	if got := tailLines("a\nb\nc", -5); got != "" {
+		t.Errorf("negative n must yield no lines, got %q", got)
+	}
+	if got := tailLines("a\nb\nc", 0); got != "" {
+		t.Errorf("zero n must yield no lines, got %q", got)
+	}
+}
+
+// The flag itself must be rejected up front with a clear error, before any
+// config/tmux work.
+func TestRunLogsRejectsNonPositiveLines(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().IntP("lines", "n", 50, "")
+	cmd.Flags().BoolP("follow", "f", true, "")
+	cmd.Flags().Set("lines", "-5")
+
+	err := runLogs(cmd, []string{"dev"})
+	if err == nil || !strings.Contains(err.Error(), "--lines") {
+		t.Errorf("expected a --lines flag error, got: %v", err)
+	}
+}
+
+// `fleet logs -f` must tell the user how to get out.
+func TestLogsHeaderHasCtrlCHint(t *testing.T) {
+	h := logsHeader("proj", "dev")
+	if !strings.Contains(h, "Ctrl-C") {
+		t.Errorf("follow header must hint Ctrl-C, got %q", h)
+	}
+	if !strings.Contains(h, "proj") || !strings.Contains(h, "dev") {
+		t.Errorf("follow header must name the project and agent, got %q", h)
+	}
+}
+
+// When the agent's tmux session dies mid-follow, `logs -f` must exit with a
+// non-nil error naming the agent — not silently succeed with exit code 0.
+func TestFollowPaneErrorsWhenSessionDies(t *testing.T) {
+	var buf bytes.Buffer
+	capture := func() (string, error) {
+		return "", errors.New("no such session")
+	}
+
+	err := followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a non-nil error when the tmux session dies, got nil")
+	}
+	if !strings.Contains(err.Error(), "dev") {
+		t.Errorf("error must name the agent, got: %v", err)
+	}
+}
+
+// Refreshes must reposition the cursor (\033[H) and erase leftovers (\033[K
+// per line, \033[J below the frame) instead of clearing the whole screen
+// (\033[2J), which flickers on every poll. The full clear happens exactly
+// once, before the first frame.
+func TestFollowPaneRefreshesWithoutFullClear(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	capture := func() (string, error) {
+		calls++
+		if calls == 1 {
+			return "new output", nil
+		}
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	out := buf.String()
+	if n := strings.Count(out, "\033[2J"); n != 1 {
+		t.Errorf("full clear must happen exactly once, before the first frame, got %d in %q", n, out)
+	}
+	home := strings.LastIndex(out, "\033[H")
+	if home < 0 {
+		t.Fatalf("refresh must home the cursor, got %q", out)
+	}
+	refresh := out[home:]
+	if strings.Contains(refresh, "\033[2J") {
+		t.Errorf("refresh must not clear the full screen, got %q", refresh)
+	}
+	if !strings.Contains(refresh, "\033[K") {
+		t.Errorf("refresh must erase each redrawn line's tail, got %q", refresh)
+	}
+	if !strings.HasSuffix(refresh, "\033[J") {
+		t.Errorf("refresh must erase below the frame, got %q", refresh)
+	}
+	if !strings.Contains(refresh, "Ctrl-C") || !strings.Contains(refresh, "new output") {
+		t.Errorf("refresh must redraw the header and the new content, got %q", refresh)
+	}
+}
+
+// The initial followed frame must start from a cleared screen at the top-left
+// so it shares the same origin as every \033[H refresh — otherwise the first
+// refresh interleaves with the shell scrollback above the initial frame.
+func TestFollowPaneClearsOnceBeforeInitialFrame(t *testing.T) {
+	var buf bytes.Buffer
+	capture := func() (string, error) {
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "initial frame", 50, time.Millisecond)
+	out := buf.String()
+	if !strings.HasPrefix(out, "\033[2J\033[H") {
+		t.Errorf("followed output must start with a one-time clear+home, got %q", out)
+	}
+	if !strings.Contains(out, "initial frame") {
+		t.Errorf("followPane must draw the initial frame itself, got %q", out)
+	}
+}
+
+// A redraw shorter than the previous frame must be followed by an erase —
+// \033[H alone leaves the previous frame's tail on screen (e.g. a spinner
+// line redrawn as a bare prompt keeps "… 42s · 1234 tokens" visible).
+func TestFollowPaneErasesStaleCharsOnShorterFrame(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	capture := func() (string, error) {
+		calls++
+		switch calls {
+		case 1:
+			return "Thinking… 42s · 1234 tokens", nil
+		case 2:
+			return "❯", nil
+		}
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	out := buf.String()
+	idx := strings.LastIndex(out, "❯")
+	if idx < 0 {
+		t.Fatalf("expected the shorter frame to be drawn, got %q", out)
+	}
+	tail := out[idx+len("❯"):]
+	if !strings.Contains(tail, "\033[J") && !strings.Contains(tail, "\033[K") {
+		t.Errorf("shorter redraw must end with an erase sequence, got tail %q in %q", tail, out)
 	}
 }
 

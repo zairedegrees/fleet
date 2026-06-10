@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -82,20 +83,25 @@ func WaitForPrompt(project, agent string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for prompt on %s", session)
 }
 
-func IsIdle(project, agent string) bool {
-	out, err := CapturePane(project, agent)
-	if err != nil {
-		return false
+// tmuxInstallHint mirrors the doctor's per-OS install hint (kept local to avoid
+// runner depending on the doctor package).
+func tmuxInstallHint(goos string) string {
+	switch goos {
+	case "darwin":
+		return "brew install tmux"
+	case "linux":
+		return "sudo apt install tmux"
+	default:
+		return "install tmux with your system package manager"
 	}
-	return strings.Contains(out, "❯")
 }
 
 // classifyListErr maps a `tmux list-sessions` failure to either nil (the benign
 // "no server running"/"no sessions" case — treat as zero sessions) or a real
 // error when tmux is absent or failed unexpectedly.
-func classifyListErr(err error, stderr []byte) error {
+func classifyListErr(goos string, err error, stderr []byte) error {
 	if errors.Is(err, exec.ErrNotFound) {
-		return fmt.Errorf("tmux not found on PATH — install tmux (brew install tmux)")
+		return fmt.Errorf("tmux not found on PATH — %s", tmuxInstallHint(goos))
 	}
 	s := strings.ToLower(string(stderr))
 	if strings.Contains(s, "no server running") || strings.Contains(s, "no sessions") {
@@ -114,7 +120,7 @@ func listSessions() ([]string, error) {
 		if errors.As(err, &exitErr) {
 			stderr = exitErr.Stderr
 		}
-		if cerr := classifyListErr(err, stderr); cerr != nil {
+		if cerr := classifyListErr(runtime.GOOS, err, stderr); cerr != nil {
 			return nil, cerr
 		}
 		return nil, nil

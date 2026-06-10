@@ -155,69 +155,6 @@ func runKillAll() error {
 	return nil
 }
 
-func runStatus() error {
-	sessions, err := runner.ListFleetSessions()
-	if err != nil {
-		return fmt.Errorf("cannot list tmux sessions: %w", err)
-	}
-	if len(sessions) == 0 {
-		fmt.Println("  No fleet sessions running.")
-		return nil
-	}
-	fmt.Printf("  %d fleet session(s):\n\n", len(sessions))
-
-	// Group sessions by project for display
-	grouped := make(map[string][]string)
-	var order []string
-	for _, s := range sessions {
-		// Parse "fleet-{project}-{agent}" — project is everything between
-		// first "fleet-" and last "-"
-		project := extractProject(s)
-		if _, seen := grouped[project]; !seen {
-			order = append(order, project)
-		}
-		grouped[project] = append(grouped[project], s)
-	}
-
-	for _, project := range order {
-		fmt.Printf("    [%s]\n", project)
-		for _, s := range grouped[project] {
-			agent := runner.AgentFromSession(project, s)
-			idle := "busy"
-			if runner.IsIdle(project, agent) {
-				idle = "idle"
-			}
-			fmt.Printf("      %s  [%s]\n", s, idle)
-		}
-		fmt.Println()
-	}
-	return nil
-}
-
-// extractProject parses the project name from a fleet session name.
-// Format: "fleet-{project}-{agent}"
-// We use the last config to identify known project names, otherwise
-// we take everything between "fleet-" and the last "-".
-func extractProject(session string) string {
-	// Strip "fleet-" prefix
-	rest := session[len("fleet-"):]
-	// The agent name is after the last dash
-	lastDash := lastIndexByte(rest, '-')
-	if lastDash < 0 {
-		return rest
-	}
-	return rest[:lastDash]
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
-}
-
 func runDispatch(cmd *cobra.Command, args []string) error {
 	agent, _ := cmd.Flags().GetString("to")
 	description := strings.Join(args, " ")
@@ -249,6 +186,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	agent := args[0]
 	follow, _ := cmd.Flags().GetBool("follow")
 	lines, _ := cmd.Flags().GetInt("lines")
+	if lines < 1 {
+		return fmt.Errorf("--lines must be at least 1, got %d", lines)
+	}
 
 	cfg, err := config.LoadLast()
 	if err != nil {
@@ -265,35 +205,58 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("capture failed: %w", err)
 	}
 
-	allLines := strings.Split(output, "\n")
-	start := 0
-	if len(allLines) > lines {
-		start = len(allLines) - lines
-	}
-	fmt.Print(strings.Join(allLines[start:], "\n"))
-
 	if !follow {
+		fmt.Println(tailLines(output, lines))
 		return nil
 	}
 
-	prev := output
+	return followPane(os.Stdout, func() (string, error) {
+		return runner.CapturePane(project, agent)
+	}, agent, logsHeader(project, agent), output, lines, 1*time.Second)
+}
+
+func tailLines(output string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	// capture-pane output ends with a newline; without this trim the trailing
+	// empty element eats one of the n requested lines.
+	allLines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
+	if len(allLines) > n {
+		allLines = allLines[len(allLines)-n:]
+	}
+	return strings.Join(allLines, "\n")
+}
+
+func logsHeader(project, agent string) string {
+	return fmt.Sprintf("  ⚡ fleet logs — %s/%s (Ctrl-C to stop)\n\n", project, agent)
+}
+
+func followPane(w io.Writer, capture func() (string, error), agent, header, initial string, lines int, interval time.Duration) error {
+	// Clear once so the initial frame and every \033[H refresh share the same
+	// top-left origin instead of interleaving with the shell scrollback.
+	fmt.Fprint(w, "\033[2J\033[H")
+	writeFrame(w, header, tailLines(initial, lines))
+	prev := initial
 	for {
-		time.Sleep(1 * time.Second)
-		current, err := runner.CapturePane(project, agent)
+		time.Sleep(interval)
+		current, err := capture()
 		if err != nil {
-			return nil
+			return fmt.Errorf("lost tmux session for agent %q: %w", agent, err)
 		}
 		if current != prev {
-			fmt.Print("\033[2J\033[H")
-			allLines = strings.Split(current, "\n")
-			start = 0
-			if len(allLines) > lines {
-				start = len(allLines) - lines
-			}
-			fmt.Print(strings.Join(allLines[start:], "\n"))
+			fmt.Fprint(w, "\033[H")
+			writeFrame(w, header, tailLines(current, lines))
 			prev = current
 		}
 	}
+}
+
+// writeFrame draws header+frame, erasing each line's leftover tail (\033[K)
+// and everything below the frame (\033[J) so a redraw shorter than the
+// previous one leaves no stale characters on screen.
+func writeFrame(w io.Writer, header, frame string) {
+	fmt.Fprint(w, strings.ReplaceAll(header+frame, "\n", "\033[K\n"), "\033[J")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {

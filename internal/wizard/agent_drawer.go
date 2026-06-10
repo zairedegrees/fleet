@@ -25,15 +25,20 @@ const (
 	dfRole
 	dfColor
 	dfReportsTo
+	dfAutoTalk
 )
+
+// autoTalkOpts are the auto-talk toggle options (index 1 = on).
+var autoTalkOpts = []string{"off", "on"}
 
 // agentDrawer is the bottom drawer sub-model for edit/create.
 type agentDrawer struct {
-	nameInput  textinput.Model
-	roleInput  textinput.Model
-	colorIdx   int
-	reportsIdx int
-	reportOpts []string // "(none)" + agent names
+	nameInput   textinput.Model
+	roleInput   textinput.Model
+	colorIdx    int
+	reportsIdx  int
+	reportOpts  []string // "(none)" + agent names
+	autoTalkIdx int      // index into autoTalkOpts
 
 	field     drawerField
 	mode      drawerMode // drawerEdit or drawerCreate
@@ -92,6 +97,11 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 			break
 		}
 	}
+
+	d.autoTalkIdx = 0
+	if agent.AutoTalk {
+		d.autoTalkIdx = 1
+	}
 }
 
 // OpenCreate opens the drawer for a new agent.
@@ -111,12 +121,16 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 	for _, name := range agentNames {
 		d.reportOpts = append(d.reportOpts, name)
 	}
+	d.autoTalkIdx = 0
 }
 
 func (d agentDrawer) Update(msg tea.Msg) (agentDrawer, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		return d.handleKey(msg)
+		// handleKey takes a pointer receiver: helpers that mutate fields
+		// through pointers must write into this same d, not a copy.
+		cmd := d.handleKey(msg)
+		return d, cmd
 	}
 
 	// Forward to active text input
@@ -130,41 +144,40 @@ func (d agentDrawer) Update(msg tea.Msg) (agentDrawer, tea.Cmd) {
 	return d, cmd
 }
 
-func (d agentDrawer) handleKey(msg tea.KeyMsg) (agentDrawer, tea.Cmd) {
+func (d *agentDrawer) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc":
-		return d, func() tea.Msg { return DrawerCancelMsg{} }
+		return func() tea.Msg { return DrawerCancelMsg{} }
 	case "tab":
 		return d.nextField()
 	}
 
 	switch d.field {
 	case dfName:
-		return d.handleTextField(msg, &d.nameInput, d.nameInput)
+		return d.handleTextField(msg, &d.nameInput)
 	case dfRole:
-		return d.handleTextField(msg, &d.roleInput, d.roleInput)
+		return d.handleTextField(msg, &d.roleInput)
 	case dfColor:
 		return d.handleSelectField(msg, &d.colorIdx, len(agentColors))
 	case dfReportsTo:
 		return d.handleSelectField(msg, &d.reportsIdx, len(d.reportOpts))
+	case dfAutoTalk:
+		return d.handleSelectField(msg, &d.autoTalkIdx, len(autoTalkOpts))
 	}
-	return d, nil
+	return nil
 }
 
-func (d agentDrawer) handleTextField(msg tea.KeyMsg, input *textinput.Model, current textinput.Model) (agentDrawer, tea.Cmd) {
+func (d *agentDrawer) handleTextField(msg tea.KeyMsg, input *textinput.Model) tea.Cmd {
 	switch msg.String() {
 	case "enter":
-		if d.field == dfReportsTo || d.field == dfColor {
-			return d.save()
-		}
 		return d.nextField()
 	}
 	var cmd tea.Cmd
-	*input, cmd = current.Update(msg)
-	return d, cmd
+	*input, cmd = input.Update(msg)
+	return cmd
 }
 
-func (d agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) (agentDrawer, tea.Cmd) {
+func (d *agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) tea.Cmd {
 	switch msg.String() {
 	case "left", "h":
 		if *idx > 0 {
@@ -183,41 +196,44 @@ func (d agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) (age
 			*idx++
 		}
 	case "enter":
-		if d.field == dfReportsTo {
+		if d.field == dfAutoTalk {
 			return d.save()
 		}
 		return d.nextField()
 	}
-	return d, nil
+	return nil
 }
 
-func (d agentDrawer) nextField() (agentDrawer, tea.Cmd) {
+func (d *agentDrawer) nextField() tea.Cmd {
 	switch d.field {
 	case dfName:
 		if strings.TrimSpace(d.nameInput.Value()) == "" {
-			return d, nil
+			return nil
 		}
 		d.field = dfRole
 		d.nameInput.Blur()
 		d.roleInput.Focus()
-		return d, textinput.Blink
+		return textinput.Blink
 	case dfRole:
 		d.field = dfColor
 		d.roleInput.Blur()
-		return d, nil
+		return nil
 	case dfColor:
 		d.field = dfReportsTo
-		return d, nil
+		return nil
 	case dfReportsTo:
+		d.field = dfAutoTalk
+		return nil
+	case dfAutoTalk:
 		return d.save()
 	}
-	return d, nil
+	return nil
 }
 
-func (d agentDrawer) save() (agentDrawer, tea.Cmd) {
+func (d *agentDrawer) save() tea.Cmd {
 	name := normalizeName(d.nameInput.Value())
 	if name == "" {
-		return d, nil
+		return nil
 	}
 
 	reportsTo := ""
@@ -230,10 +246,12 @@ func (d agentDrawer) save() (agentDrawer, tea.Cmd) {
 		Color:     agentColors[d.colorIdx],
 		Role:      strings.TrimSpace(d.roleInput.Value()),
 		ReportsTo: reportsTo,
+		AutoTalk:  d.autoTalkIdx == 1,
 	}
 
-	return d, func() tea.Msg {
-		return DrawerSaveMsg{Agent: agent, Index: d.editIndex}
+	index := d.editIndex
+	return func() tea.Msg {
+		return DrawerSaveMsg{Agent: agent, Index: index}
 	}
 }
 
@@ -292,6 +310,21 @@ func (d agentDrawer) View() string {
 	sb.WriteString(label)
 	for i, opt := range d.reportOpts {
 		if i == d.reportsIdx {
+			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
+		} else {
+			sb.WriteString(dimStyle.Render(opt) + " ")
+		}
+	}
+	sb.WriteString("\n")
+
+	// Auto-talk field
+	label = dimStyle.Render("  Auto-talk:  ")
+	if d.field == dfAutoTalk {
+		label = selectedStyle.Render("▸ Auto-talk:  ")
+	}
+	sb.WriteString(label)
+	for i, opt := range autoTalkOpts {
+		if i == d.autoTalkIdx {
 			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
 		} else {
 			sb.WriteString(dimStyle.Render(opt) + " ")
