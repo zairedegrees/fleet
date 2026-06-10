@@ -139,18 +139,48 @@ func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string
 	return logPath, relayErr
 }
 
+// identityPreamble is the one-line prose message that travels with every wake.
+// It tells a woken agent who it is and that it is ALREADY registered server-side
+// (by registerFleet), so its LLM must use as:/project: on every relay call and
+// must NEVER call register_agent — a bare re-register drops profile_slug and an
+// older relay's full-replace UPDATE NULLs it, silently breaking task routing.
+// Prose (no /relay command, no newline) so a normal Enter submits it without the
+// skill-autocomplete Enter-swallow.
+func identityPreamble(name, project string) string {
+	return fmt.Sprintf("You are agent '%s' on project '%s', already registered on the relay by your orchestrator. Use as:'%s' project:'%s' on every relay tool call. Do NOT call register_agent — your profile_slug is already set and re-registering would clear it on older relays.", name, project, name, project)
+}
+
+// shellSingleQuote wraps s for a single-quoted tmux send-keys argument, escaping
+// embedded single quotes with the standard '\'' idiom.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// writeWake emits the wake choreography for a script: the identity preamble
+// (prose, normal Enter) so the agent learns who it is without registering, then
+// /relay talk via the type → settle → SEPARATE Enter sequence the skill
+// autocomplete requires.
+func writeWake(script *strings.Builder, session, name, project string) {
+	script.WriteString(fmt.Sprintf("  tmux send-keys -t %s %s Enter\n", session, shellSingleQuote(identityPreamble(name, project))))
+	script.WriteString("  sleep 1\n")
+	script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk'\n", session))
+	script.WriteString("  sleep 1\n")
+	script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
+}
+
 // buildConfigureScript returns the bash script for the pane-dependent agent
-// configuration after Claude boots: rename/color, the in-pane /relay register
-// skill command, the register_agent re-assert curl, and — only for agents with
-// AutoTalk=true — the continuous `/relay talk` poll loop. Profile + vault HTTP
-// lives in registerFleet via the typed client; the script must stay detached
-// because it waits up to ~90s per pane and must survive fleet's exit.
-// Kept pure so the talk-gating logic is unit-testable.
+// configuration after Claude boots: rename/color and — only for agents with
+// AutoTalk=true — the identity preamble + `/relay talk` wake. The agent NEVER
+// self-registers in its pane (a bare /relay register would make its LLM call
+// register_agent without profile_slug, which an old relay's full-replace UPDATE
+// NULLs, breaking task routing); fleet registers it server-side in registerFleet.
+// Profile + vault HTTP lives in registerFleet via the typed client; the script
+// must stay detached because it waits up to ~90s per pane and must survive
+// fleet's exit. Kept pure so the talk-gating logic is unit-testable.
 func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
 	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
-	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", resolveRelayURL(cfg)))
 	script.WriteString("wait_prompt() {\n")
 	script.WriteString("  local session=$1 timeout=$2 elapsed=0\n")
 	script.WriteString("  while [ $elapsed -lt $timeout ]; do\n")
@@ -167,7 +197,6 @@ func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 	project := cfg.Project.Name
 	for _, agent := range cfg.Agents {
 		session := SessionName(project, agent.Name)
-		escapedRole := strings.ReplaceAll(agent.Role, "'", "'\\''")
 
 		script.WriteString(fmt.Sprintf("# Configure %s\n", agent.Name))
 		script.WriteString(fmt.Sprintf("if wait_prompt %s 90; then\n", session))
@@ -176,33 +205,14 @@ func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/color %s' Enter\n", session, agent.Color))
 		script.WriteString("  sleep 2\n")
 
-		registerCmd := fmt.Sprintf("/relay register %s %s %s", agent.Name, cfg.Project.Name, escapedRole)
-		if agent.ReportsTo != "" {
-			registerCmd += " Reports to " + agent.ReportsTo + "."
-		}
-		// Type the command, let the input + skill autocomplete settle, then submit
-		// with a SEPARATE Enter. A long /relay command sent as '...' Enter in one
-		// keystroke is typed but never submitted (the Enter is swallowed).
-		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s'\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
-		script.WriteString("  sleep 1\n")
-		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
-		script.WriteString("  sleep 3\n")
-
-		// The in-pane /relay register above makes the agent's LLM call
-		// register_agent WITHOUT profile_slug/reports_to/is_executive, and the
-		// relay's re-register is a full-replace UPDATE that NULLs them — making
-		// dispatched tasks invisible to the agent. Re-assert the complete
-		// registration here so this curl is the LAST write (the battle-tested
-		// order from main). Do not remove it for protocol purity.
-		script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_agent\",\"arguments\":{\"name\":\"%s\",\"project\":\"%s\",\"role\":\"%s\",\"profile_slug\":\"%s\",\"reports_to\":\"%s\",\"is_executive\":%t}}}' > /dev/null 2>&1\n",
-			agent.Name, cfg.Project.Name, strings.ReplaceAll(agent.Role, "\"", "\\\""), agent.Name, agent.ReportsTo, agent.IsExecutive))
-		script.WriteString("  sleep 1\n")
-
+		// No in-pane /relay register: a bare self-register makes the agent's LLM
+		// call register_agent without profile_slug, and an old relay's full-replace
+		// UPDATE NULLs it, breaking task routing. fleet already registered this
+		// agent server-side (registerFleet). An idle agent stays dormant here —
+		// rename+color only, zero agent tokens.
 		if agent.AutoTalk {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
-			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk'\n", session))
-			script.WriteString("  sleep 1\n")
-			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
+			writeWake(&script, session, agent.Name, project)
 		}
 
 		script.WriteString(fmt.Sprintf("  echo '✓ %s configured'\n", session))
