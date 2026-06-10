@@ -173,12 +173,14 @@ func (c *Client) ListProfiles(project string) ([]Profile, error) {
 }
 
 func (c *Client) DispatchTask(agent, project, description string) error {
+	// The relay dispatches to a profile slug (= agent name here), and priority is
+	// a P0–P3 enum — not "assignee"/"high", which the relay rejects.
 	_, err := c.call("dispatch_task", map[string]interface{}{
-		"assignee":    agent,
+		"profile":     agent,
 		"project":     project,
 		"title":       description,
 		"description": description,
-		"priority":    "high",
+		"priority":    "P1",
 	})
 	return err
 }
