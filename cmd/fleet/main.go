@@ -30,6 +30,16 @@ var (
 	killAllFleetSessions = runner.KillAllFleetSessions
 )
 
+// Seams over the launch side effects (config persistence, tmux sessions,
+// iTerm2, background configuration) so the launch pipeline is unit-testable
+// without real sessions.
+var (
+	saveConfigAsLast     = config.SaveAsLast
+	createSessions       = runner.CreateSessions
+	openITerm2Grid       = runner.OpenITerm2Grid
+	configureAgentsAsync = runner.ConfigureAgentsAsync
+)
+
 var (
 	flagLast     bool
 	flagKill     bool
@@ -410,13 +420,11 @@ func runStop(cmd *cobra.Command, args []string) error {
 }
 
 func runLast() error {
-	cfg, err := config.LoadLast()
+	cfg, err := loadLastConfig()
 	if err != nil {
 		fmt.Println("  No saved config found. Run 'fleet' to create one.")
 		return runWizard()
 	}
-
-	cfg.Project.RelayURL = resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)
 
 	var agentNames []string
 	for _, a := range cfg.Agents {
@@ -449,8 +457,6 @@ func runWizard() error {
 		return err
 	}
 
-	result.Config.Project.RelayURL = resolveRelayURL(flagRelayURL, result.Config.Project.RelayURL)
-
 	return launch(result.Config, result.Save)
 }
 
@@ -476,6 +482,14 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
+	// An empty config relay_url is filled with the default and persisted; the
+	// --relay-url flag is a per-invocation override that drives every relay
+	// call of this launch but must never be written to the saved config.
+	if cfg.Project.RelayURL == "" {
+		cfg.Project.RelayURL = defaultRelayURL
+	}
+	relayURL := resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)
+
 	claudeBin, err := cfg.Claude.ResolveBin()
 	if err != nil {
 		fmt.Printf("  ✗ %v\n", err)
@@ -483,22 +497,22 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return err
 	}
 
-	relayClient := relay.NewClient(cfg.Project.RelayURL)
+	relayClient := relay.NewClient(relayURL)
 	if err := relayClient.Health(); err != nil {
-		fmt.Printf("  ✗ Relay unreachable at %s\n", cfg.Project.RelayURL)
+		fmt.Printf("  ✗ Relay unreachable at %s\n", relayURL)
 		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
 		return fmt.Errorf("relay health check failed: %w", err)
 	}
 
 	// Preflight: fail early on a broken/absent tmux rather than per-agent later.
-	if _, err := runner.ListFleetSessions(); err != nil {
+	if _, err := listFleetSessions(); err != nil {
 		fmt.Printf("  ✗ %v\n", err)
 		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
 		return err
 	}
 
 	// Always save config
-	if err := config.SaveAsLast(cfg); err != nil {
+	if err := saveConfigAsLast(cfg); err != nil {
 		fmt.Printf("  ⚠ Failed to save config: %v\n", err)
 	} else if save {
 		fmt.Println("  Config saved to ~/.fleet/configs/" + cfg.Project.Name + ".toml")
@@ -507,7 +521,7 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	fmt.Print("\n  🚀 Launching fleet...\n\n")
 
 	// Phase 1: Create tmux sessions + launch claude (fast)
-	results := runner.CreateSessions(cfg, claudeBin)
+	results := createSessions(cfg, claudeBin)
 
 	launchErr := reportLaunchResults(os.Stderr, results)
 
@@ -523,11 +537,17 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	for _, a := range cfg.Agents {
 		agentNames = append(agentNames, a.Name)
 	}
-	runner.OpenITerm2Grid(cfg.Project.Name, agentNames)
+	openITerm2Grid(cfg.Project.Name, agentNames)
 
 	// Phase 3: Configure agents in background via a shell script
-	// (fleet exits, script waits for prompts and sends init commands)
-	logPath, cfgErr := runner.ConfigureAgentsAsync(cfg)
+	// (fleet exits, script waits for prompts and sends init commands).
+	// ConfigureAgentsAsync reads the relay URL from cfg, so hand it the
+	// runtime URL on the in-memory value only and restore it — the file saved
+	// above keeps the config's own relay_url.
+	persistedURL := cfg.Project.RelayURL
+	cfg.Project.RelayURL = relayURL
+	logPath, cfgErr := configureAgentsAsync(cfg)
+	cfg.Project.RelayURL = persistedURL
 	if cfgErr != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Agent configuration failed to start: %v\n", cfgErr)
 		if launchErr == nil {
