@@ -230,8 +230,17 @@ func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 // Usage from Claude Code: ! bash ~/.fleet/wake.sh dev
 // Usage to wake all:      ! bash ~/.fleet/wake.sh --all
 func generateWakeScript(cfg *config.FleetConfig) {
-	project := cfg.Project.Name
 	wakePath := filepath.Join(config.FleetDir(), "wake.sh")
+	os.WriteFile(wakePath, []byte(buildWakeScript(cfg)), 0755)
+}
+
+// buildWakeScript is the pure wake.sh builder (kept separate from disk I/O so the
+// preamble + escaping is unit-testable). Every wake delivers the identity
+// preamble BEFORE /relay talk so the woken worker knows who it is and never
+// self-registers — fleet registered it server-side, and a bare register_agent
+// drops profile_slug on older relays.
+func buildWakeScript(cfg *config.FleetConfig) string {
+	project := cfg.Project.Name
 
 	var w strings.Builder
 	w.WriteString("#!/bin/bash\n")
@@ -242,6 +251,9 @@ func generateWakeScript(cfg *config.FleetConfig) {
 	for _, agent := range cfg.Agents {
 		if !agent.IsExecutive {
 			session := SessionName(project, agent.Name)
+			// Literal name known at generation time: single-quote the preamble.
+			w.WriteString(fmt.Sprintf("  tmux send-keys -t %s %s Enter 2>/dev/null\n",
+				session, shellSingleQuote(identityPreamble(agent.Name, project))))
 			w.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter 2>/dev/null && echo '  ✓ %s woken' || echo '  ⚠ %s: no session'\n",
 				session, agent.Name, agent.Name))
 		}
@@ -263,9 +275,25 @@ func generateWakeScript(cfg *config.FleetConfig) {
 	w.WriteString("fi\n\n")
 
 	w.WriteString(fmt.Sprintf("SESSION=\"fleet-%s-$1\"\n", project))
+	// Agent name is the runtime $1: double-quote the preamble so $1 expands; the
+	// literal single quotes around <name>/<project> stay as plain characters.
+	w.WriteString(fmt.Sprintf("tmux send-keys -t \"$SESSION\" %s Enter 2>/dev/null\n",
+		wakePreambleArgExpr("$1", project)))
 	w.WriteString("tmux send-keys -t \"$SESSION\" '/relay talk' Enter 2>/dev/null && echo \"  ✓ $1 woken\" || echo \"  ⚠ $1: no session\"\n")
 
-	os.WriteFile(wakePath, []byte(w.String()), 0755)
+	return w.String()
+}
+
+// wakePreambleArgExpr returns a double-quoted tmux send-keys argument for the
+// identity preamble where the agent name is a shell expression (e.g. "$1") that
+// must expand at runtime. The preamble's literal single quotes are plain
+// characters inside double quotes; backslash and " are escaped, and $ is left
+// intact so the name expression expands (the preamble carries no other $).
+func wakePreambleArgExpr(nameExpr, project string) string {
+	msg := identityPreamble(nameExpr, project)
+	msg = strings.ReplaceAll(msg, `\`, `\\`)
+	msg = strings.ReplaceAll(msg, `"`, `\"`)
+	return `"` + msg + `"`
 }
 
 // rotateConfigLogs keeps only the N most recent log files.
