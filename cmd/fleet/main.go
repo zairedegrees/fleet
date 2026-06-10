@@ -265,32 +265,44 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("capture failed: %w", err)
 	}
 
-	allLines := strings.Split(output, "\n")
-	start := 0
-	if len(allLines) > lines {
-		start = len(allLines) - lines
-	}
-	fmt.Print(strings.Join(allLines[start:], "\n"))
-
 	if !follow {
+		fmt.Print(tailLines(output, lines))
 		return nil
 	}
 
-	prev := output
+	header := logsHeader(project, agent)
+	fmt.Print(header)
+	fmt.Print(tailLines(output, lines))
+
+	return followPane(os.Stdout, func() (string, error) {
+		return runner.CapturePane(project, agent)
+	}, agent, header, output, lines, 1*time.Second)
+}
+
+func tailLines(output string, n int) string {
+	allLines := strings.Split(output, "\n")
+	if len(allLines) > n {
+		allLines = allLines[len(allLines)-n:]
+	}
+	return strings.Join(allLines, "\n")
+}
+
+func logsHeader(project, agent string) string {
+	return fmt.Sprintf("  ⚡ fleet logs — %s/%s (Ctrl-C to stop)\n\n", project, agent)
+}
+
+func followPane(w io.Writer, capture func() (string, error), agent, header, initial string, lines int, interval time.Duration) error {
+	prev := initial
 	for {
-		time.Sleep(1 * time.Second)
-		current, err := runner.CapturePane(project, agent)
+		time.Sleep(interval)
+		current, err := capture()
 		if err != nil {
-			return nil
+			return fmt.Errorf("lost tmux session for agent %q: %w", agent, err)
 		}
 		if current != prev {
-			fmt.Print("\033[2J\033[H")
-			allLines = strings.Split(current, "\n")
-			start = 0
-			if len(allLines) > lines {
-				start = len(allLines) - lines
-			}
-			fmt.Print(strings.Join(allLines[start:], "\n"))
+			fmt.Fprint(w, "\033[H")
+			fmt.Fprint(w, header)
+			fmt.Fprint(w, tailLines(current, lines))
 			prev = current
 		}
 	}

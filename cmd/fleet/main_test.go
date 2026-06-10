@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -73,6 +74,69 @@ func TestRunAddRejectsInvalidAgentBeforeTouchingTmux(t *testing.T) {
 	err := runAdd(cmd, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid agent name") {
 		t.Errorf("expected validation to reject the invalid name, got: %v", err)
+	}
+}
+
+func TestTailLines(t *testing.T) {
+	if got := tailLines("a\nb\nc\nd", 2); got != "c\nd" {
+		t.Errorf("tailLines should keep the last n lines, got %q", got)
+	}
+	if got := tailLines("a\nb", 5); got != "a\nb" {
+		t.Errorf("tailLines should keep everything when shorter than n, got %q", got)
+	}
+}
+
+// `fleet logs -f` must tell the user how to get out.
+func TestLogsHeaderHasCtrlCHint(t *testing.T) {
+	h := logsHeader("proj", "dev")
+	if !strings.Contains(h, "Ctrl-C") {
+		t.Errorf("follow header must hint Ctrl-C, got %q", h)
+	}
+	if !strings.Contains(h, "proj") || !strings.Contains(h, "dev") {
+		t.Errorf("follow header must name the project and agent, got %q", h)
+	}
+}
+
+// When the agent's tmux session dies mid-follow, `logs -f` must exit with a
+// non-nil error naming the agent — not silently succeed with exit code 0.
+func TestFollowPaneErrorsWhenSessionDies(t *testing.T) {
+	var buf bytes.Buffer
+	capture := func() (string, error) {
+		return "", errors.New("no such session")
+	}
+
+	err := followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	if err == nil {
+		t.Fatal("expected a non-nil error when the tmux session dies, got nil")
+	}
+	if !strings.Contains(err.Error(), "dev") {
+		t.Errorf("error must name the agent, got: %v", err)
+	}
+}
+
+// Refreshes must reposition the cursor (\033[H) instead of clearing the whole
+// screen (\033[2J), which flickers on every poll.
+func TestFollowPaneRefreshesWithoutFullClear(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	capture := func() (string, error) {
+		calls++
+		if calls == 1 {
+			return "new output", nil
+		}
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	out := buf.String()
+	if strings.Contains(out, "\033[2J") {
+		t.Errorf("refresh must not clear the full screen, got %q", out)
+	}
+	if !strings.Contains(out, "\033[H") {
+		t.Errorf("refresh must home the cursor, got %q", out)
+	}
+	if !strings.Contains(out, "Ctrl-C") || !strings.Contains(out, "new output") {
+		t.Errorf("refresh must redraw the header and the new content, got %q", out)
 	}
 }
 
