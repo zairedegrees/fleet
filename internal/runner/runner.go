@@ -76,30 +76,48 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 // ConfigureAgentsAsync generates a shell script that configures agents after
 // Claude boots, then launches it as a detached process that survives fleet exit.
 // Logs output to ~/.fleet/logs/configure-{timestamp}.log
-func ConfigureAgentsAsync(cfg *config.FleetConfig) {
-	logDir := filepath.Join(config.FleetDir(), "logs")
-	os.MkdirAll(logDir, 0755)
+func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
+	// wake.sh is independent of the configure run; generate it up front.
+	generateWakeScript(cfg)
+	return configureAgents(cfg, config.FleetDir(), spawnDetached)
+}
+
+// spawnDetached starts the configure script as a detached process that survives
+// fleet exit.
+func spawnDetached(scriptPath string) error {
+	cmd := exec.Command("bash", scriptPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd.Start()
+}
+
+// configureAgents writes the configure script under fleetDir and runs it via
+// spawn, returning the log path plus any setup/spawn error. Taking fleetDir and
+// spawn as parameters makes the error paths unit-testable without touching
+// ~/.fleet or actually running bash.
+func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string) error) (string, error) {
+	logDir := filepath.Join(fleetDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return "", fmt.Errorf("create log dir: %w", err)
+	}
 	rotateConfigLogs(logDir, 5)
 
 	timestamp := time.Now().Format("20060102-150405")
 	logPath := filepath.Join(logDir, fmt.Sprintf("configure-%s.log", timestamp))
-	scriptPath := filepath.Join(config.FleetDir(), "configure-agents.sh")
+	scriptPath := filepath.Join(fleetDir, "configure-agents.sh")
 
 	relayURL := cfg.Project.RelayURL
 	if relayURL == "" {
 		relayURL = "http://localhost:8090/mcp"
 	}
 
-	os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, relayURL, logPath)), 0755)
+	if err := os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, relayURL, logPath)), 0755); err != nil {
+		return logPath, fmt.Errorf("write configure script: %w", err)
+	}
 
-	// Generate wake.sh — lets the boss agent wake other agents from Claude Code
-	// Usage: ! bash ~/.fleet/wake.sh <agent-name>
-	generateWakeScript(cfg)
-
-	// Launch as detached process — survives fleet exit
-	cmd := exec.Command("bash", scriptPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Start()
+	if err := spawn(scriptPath); err != nil {
+		return logPath, fmt.Errorf("start configure script: %w", err)
+	}
+	return logPath, nil
 }
 
 // buildConfigureScript returns the bash script that configures each agent after

@@ -122,7 +122,10 @@ func runKill() error {
 	config.SaveAsLast(cfg)
 	fmt.Printf("  Config saved for %s.\n", cfg.Project.Name)
 
-	sessions, _ := runner.ListProjectSessions(cfg.Project.Name)
+	sessions, err := runner.ListProjectSessions(cfg.Project.Name)
+	if err != nil {
+		return fmt.Errorf("cannot list tmux sessions: %w", err)
+	}
 	if len(sessions) == 0 {
 		fmt.Printf("  No fleet sessions running for project %q.\n", cfg.Project.Name)
 		return nil
@@ -139,7 +142,10 @@ func runKill() error {
 }
 
 func runKillAll() error {
-	sessions, _ := runner.ListFleetSessions()
+	sessions, err := runner.ListFleetSessions()
+	if err != nil {
+		return fmt.Errorf("cannot list tmux sessions: %w", err)
+	}
 	if len(sessions) == 0 {
 		fmt.Println("  No fleet sessions running.")
 		return nil
@@ -150,7 +156,10 @@ func runKillAll() error {
 }
 
 func runStatus() error {
-	sessions, _ := runner.ListFleetSessions()
+	sessions, err := runner.ListFleetSessions()
+	if err != nil {
+		return fmt.Errorf("cannot list tmux sessions: %w", err)
+	}
 	if len(sessions) == 0 {
 		fmt.Println("  No fleet sessions running.")
 		return nil
@@ -293,21 +302,28 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	color, _ := cmd.Flags().GetString("color")
 	reportsTo, _ := cmd.Flags().GetString("reports-to")
 
-	cfg, err := config.LoadLast()
+	cfg, err := loadLastConfig()
 	if err != nil {
 		return fmt.Errorf("no fleet config found. Run 'fleet' first")
 	}
 	project := cfg.Project.Name
-
-	if runner.HasSession(project, name) {
-		return fmt.Errorf("agent %q already has a running session", name)
-	}
 
 	agent := config.AgentConfig{
 		Name:      name,
 		Color:     color,
 		Role:      role,
 		ReportsTo: reportsTo,
+	}
+
+	// Validate the resulting fleet before creating any session — an invalid
+	// name/role (P0-2) or a duplicate must not produce a half-broken agent.
+	cfg.Agents = append(cfg.Agents, agent)
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid agent: %w", err)
+	}
+
+	if runner.HasSession(project, name) {
+		return fmt.Errorf("agent %q already has a running session", name)
 	}
 
 	claudeBin, err := cfg.Claude.ResolveBin()
@@ -326,7 +342,20 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to launch claude: %w", err)
 	}
 
-	cfg.Agents = append(cfg.Agents, agent)
+	// Register on the relay (profile + profile_slug) so the agent can actually
+	// receive dispatched tasks — without this it's a ghost in the grid.
+	relayURL := cfg.Project.RelayURL
+	if relayURL == "" {
+		relayURL = defaultRelayURL
+	}
+	client := relay.NewClient(relayURL)
+	if err := client.EnsureProfile(name, role, project); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ profile registration failed: %v\n", err)
+	}
+	if err := client.RegisterAgent(name, project, role, name); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ relay registration failed: %v\n", err)
+	}
+
 	config.SaveAsLast(cfg)
 
 	fmt.Printf("  ✓ Agent %s added to %s.\n", name, project)
@@ -347,10 +376,17 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	runner.SendKeys(project, agent, "/exit")
-	time.Sleep(3 * time.Second)
-
-	if runner.HasSession(project, agent) {
+	if !runner.WaitSessionGone(project, agent, 3*time.Second) {
 		runner.KillSession(project, agent)
+	}
+
+	// Deregister from the relay so the agent doesn't linger as a ghost.
+	relayURL := cfg.Project.RelayURL
+	if relayURL == "" {
+		relayURL = defaultRelayURL
+	}
+	if err := relay.NewClient(relayURL).DeactivateAgent(agent, project); err != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ Agent stopped but relay deregistration failed: %v\n", err)
 	}
 
 	var updated []config.AgentConfig
@@ -456,6 +492,13 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return fmt.Errorf("relay health check failed: %w", err)
 	}
 
+	// Preflight: fail early on a broken/absent tmux rather than per-agent later.
+	if _, err := runner.ListFleetSessions(); err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
+		return err
+	}
+
 	// Always save config
 	if err := config.SaveAsLast(cfg); err != nil {
 		fmt.Printf("  ⚠ Failed to save config: %v\n", err)
@@ -486,13 +529,23 @@ func launch(cfg *config.FleetConfig, save bool) error {
 
 	// Phase 3: Configure agents in background via a shell script
 	// (fleet exits, script waits for prompts and sends init commands)
-	runner.ConfigureAgentsAsync(cfg)
+	logPath, cfgErr := runner.ConfigureAgentsAsync(cfg)
+	if cfgErr != nil {
+		fmt.Fprintf(os.Stderr, "  ⚠ Agent configuration failed to start: %v\n", cfgErr)
+		if launchErr == nil {
+			launchErr = cfgErr
+		}
+	}
 
 	if launchErr != nil {
 		fmt.Printf("\n  ⚠ Fleet partially launched: %d/%d sessions created.\n", success, len(cfg.Agents))
 	} else {
 		fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
 	}
-	fmt.Print("  Agents configuring in background (watch iTerm2 panes).\n\n")
+	fmt.Print("  Agents configuring in background (watch iTerm2 panes).\n")
+	if logPath != "" {
+		fmt.Printf("  Config log: %s\n", logPath)
+	}
+	fmt.Println()
 	return launchErr
 }

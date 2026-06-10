@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -79,15 +80,51 @@ func IsIdle(project, agent string) bool {
 	return strings.Contains(out, "❯")
 }
 
+// classifyListErr maps a `tmux list-sessions` failure to either nil (the benign
+// "no server running"/"no sessions" case — treat as zero sessions) or a real
+// error when tmux is absent or failed unexpectedly.
+func classifyListErr(err error, stderr []byte) error {
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("tmux not found on PATH — install tmux (brew install tmux)")
+	}
+	s := strings.ToLower(string(stderr))
+	if strings.Contains(s, "no server running") || strings.Contains(s, "no sessions") {
+		return nil
+	}
+	return fmt.Errorf("tmux list-sessions failed: %s", strings.TrimSpace(string(stderr)))
+}
+
+// listSessions returns every tmux session name, distinguishing a broken/absent
+// tmux (error) from a server with no sessions (empty, nil).
+func listSessions() ([]string, error) {
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		var stderr []byte
+		if errors.As(err, &exitErr) {
+			stderr = exitErr.Stderr
+		}
+		if cerr := classifyListErr(err, stderr); cerr != nil {
+			return nil, cerr
+		}
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
+}
+
 // ListProjectSessions returns sessions for a specific project.
 func ListProjectSessions(project string) ([]string, error) {
 	prefix := sessionPrefix + "-" + sanitizeProject(project) + "-"
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	all, err := listSessions()
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	var sessions []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range all {
 		if strings.HasPrefix(line, prefix) {
 			sessions = append(sessions, line)
 		}
@@ -103,12 +140,12 @@ func AgentFromSession(project, session string) string {
 
 // ListFleetSessions returns ALL fleet sessions across all projects.
 func ListFleetSessions() ([]string, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	all, err := listSessions()
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	var sessions []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range all {
 		if strings.HasPrefix(line, sessionPrefix+"-") {
 			sessions = append(sessions, line)
 		}
@@ -140,6 +177,29 @@ func WakeAgent(project, agent string) error {
 		return fmt.Errorf("no tmux session for agent %q in project %q", agent, project)
 	}
 	return SendKeys(project, agent, "/relay talk")
+}
+
+// waitGone polls gone() up to attempts times (interval apart), returning true as
+// soon as it reports the session is gone — replaces a blind fixed sleep.
+func waitGone(gone func() bool, attempts int, interval time.Duration) bool {
+	for i := 0; i < attempts; i++ {
+		if gone() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return gone()
+}
+
+// WaitSessionGone waits up to timeout for an agent's tmux session to exit on its
+// own (e.g. after /exit), returning true if it did.
+func WaitSessionGone(project, agent string, timeout time.Duration) bool {
+	const interval = 200 * time.Millisecond
+	attempts := int(timeout / interval)
+	if attempts < 1 {
+		attempts = 1
+	}
+	return waitGone(func() bool { return !HasSession(project, agent) }, attempts, interval)
 }
 
 // DetectConflicts checks if any of the given agents already have sessions in the project.

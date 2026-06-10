@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/runner"
 )
@@ -45,6 +47,32 @@ func TestReportLaunchResultsErrorsOnFailure(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "ops") || !strings.Contains(out, "boom") {
 		t.Errorf("failure output must name the failed agent and its error, got: %q", out)
+	}
+}
+
+// `fleet add` must validate the agent (reusing config.Validate) BEFORE creating
+// any tmux session, so an invalid name/role can't produce a half-broken agent.
+func TestRunAddRejectsInvalidAgentBeforeTouchingTmux(t *testing.T) {
+	orig := loadLastConfig
+	t.Cleanup(func() { loadLastConfig = orig })
+	loadLastConfig = func() (*config.FleetConfig, error) {
+		return &config.FleetConfig{
+			Project: config.ProjectConfig{Name: "proj", Cwd: "/tmp"},
+			Agents:  []config.AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+		}, nil
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("role", "", "")
+	cmd.Flags().String("color", "green", "")
+	cmd.Flags().String("reports-to", "", "")
+	cmd.Flags().Set("name", "bad name!")
+	cmd.Flags().Set("role", "Dev")
+
+	err := runAdd(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "invalid agent name") {
+		t.Errorf("expected validation to reject the invalid name, got: %v", err)
 	}
 }
 
