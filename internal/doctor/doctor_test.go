@@ -5,9 +5,31 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"reflect"
 	"testing"
 	"time"
 )
+
+// swapExecCommand replaces the execCommand seam with a fake that records each
+// probe's argv and runs mk() instead; the real seam is restored on cleanup.
+func swapExecCommand(t *testing.T, mk func() *exec.Cmd) *[][]string {
+	t.Helper()
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, append([]string{name}, args...))
+		return mk()
+	}
+	t.Cleanup(func() { execCommand = orig })
+	return &calls
+}
+
+// failingCmd returns a command whose Output() always errors, simulating a
+// probe binary missing from PATH.
+func failingCmd() *exec.Cmd {
+	return exec.Command("fleet-doctor-no-such-binary")
+}
 
 // healthyRelay returns an httptest server that answers the MCP tools/call the
 // way the real wrai.th relay does (a JSON-RPC envelope with a text content block).
@@ -97,6 +119,60 @@ func TestRunSkipsITerm2OffDarwin(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("iTerm2 check must be present on darwin")
+	}
+}
+
+// The tmux probe must run exactly `tmux -V` and feed its output into the
+// pure tmuxCheck builder.
+func TestCheckTmuxArgv(t *testing.T) {
+	calls := swapExecCommand(t, func() *exec.Cmd { return exec.Command("echo", "tmux 3.4") })
+
+	c := checkTmux("linux")
+	if want := [][]string{{"tmux", "-V"}}; !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("checkTmux argv = %v, want %v", *calls, want)
+	}
+	if c.Status != "ok" || c.Detail != "tmux 3.4" {
+		t.Fatalf("probe output must flow into the check, got %+v", c)
+	}
+}
+
+// A failing tmux probe must flow through tmuxCheck into a missing check with
+// the per-OS install hint.
+func TestCheckTmuxProbeErrorFlowsToBuilder(t *testing.T) {
+	swapExecCommand(t, failingCmd)
+
+	c := checkTmux("linux")
+	if c.Status != "missing" {
+		t.Fatalf("expected status missing for a failed probe, got %q", c.Status)
+	}
+	if want := installHint("linux", "tmux"); c.FixCmd != want {
+		t.Errorf("FixCmd = %q, want %q", c.FixCmd, want)
+	}
+}
+
+// The claude probe must run exactly `claude --version` and surface its output.
+func TestCheckClaudeArgv(t *testing.T) {
+	calls := swapExecCommand(t, func() *exec.Cmd { return exec.Command("echo", "1.2.3 (Claude Code)") })
+
+	c := checkClaude()
+	if want := [][]string{{"claude", "--version"}}; !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("checkClaude argv = %v, want %v", *calls, want)
+	}
+	if c.Status != "ok" || c.Detail != "1.2.3 (Claude Code)" {
+		t.Fatalf("probe output must flow into the check, got %+v", c)
+	}
+}
+
+// A failing claude probe must produce a missing check with the npm install hint.
+func TestCheckClaudeProbeErrorFlowsToBuilder(t *testing.T) {
+	swapExecCommand(t, failingCmd)
+
+	c := checkClaude()
+	if c.Status != "missing" {
+		t.Fatalf("expected status missing for a failed probe, got %q", c.Status)
+	}
+	if want := "npm install -g @anthropic-ai/claude-code"; c.FixCmd != want {
+		t.Errorf("FixCmd = %q, want %q", c.FixCmd, want)
 	}
 }
 
