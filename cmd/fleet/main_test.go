@@ -249,6 +249,15 @@ func TestResolveRelayURLPriority(t *testing.T) {
 	if got := resolveRelayURL("", ""); got != defaultRelayURL {
 		t.Errorf("empty everything must fall back to default, got %q", got)
 	}
+	if got := resolveRelayURL("   ", "http://cfg/mcp"); got != "http://cfg/mcp" {
+		t.Errorf("whitespace-only flag means unset and must not win the chain, got %q", got)
+	}
+	if got := resolveRelayURL("   ", ""); got != defaultRelayURL {
+		t.Errorf("whitespace-only flag with no config must fall back to default, got %q", got)
+	}
+	if got := resolveRelayURL("  http://flag/mcp  ", "http://cfg/mcp"); got != "http://flag/mcp" {
+		t.Errorf("flag value must be trimmed, got %q", got)
+	}
 }
 
 func installFakeSessions(t *testing.T, sessions []string) *int {

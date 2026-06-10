@@ -41,10 +41,11 @@ var (
 )
 
 // resolveRelayURL is the single priority chain for relay URL resolution:
-// --relay-url flag > config URL > built-in default.
+// --relay-url flag > config URL > built-in default. The flag value is
+// trimmed; whitespace-only means unset and must not win the chain.
 func resolveRelayURL(flagURL, configURL string) string {
-	if flagURL != "" {
-		return flagURL
+	if u := strings.TrimSpace(flagURL); u != "" {
+		return u
 	}
 	if configURL != "" {
 		return configURL
