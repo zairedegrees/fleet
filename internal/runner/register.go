@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 // registerTimeout caps each synchronous registration call so a hanging relay
@@ -17,7 +18,7 @@ const registerTimeout = 3 * time.Second
 // a seam so registerFleet is testable against httptest or a fake.
 type relayRegistrar interface {
 	EnsureProfile(name, role, project string) error
-	RegisterAgent(name, project, role, profileSlug string) error
+	RegisterAgentFull(r relay.AgentRegistration) error
 	PushVaultDoc(project, path string, content []byte) error
 }
 
@@ -35,7 +36,10 @@ func registerFleet(cfg *config.FleetConfig, rc relayRegistrar) error {
 		if err := rc.EnsureProfile(agent.Name, agent.Role, project); err != nil {
 			errs = append(errs, fmt.Errorf("profile %s: %w", agent.Name, err))
 		}
-		if err := rc.RegisterAgent(agent.Name, project, agent.Role, agent.Name); err != nil {
+		if err := rc.RegisterAgentFull(relay.AgentRegistration{
+			Name: agent.Name, Project: project, Role: agent.Role,
+			ProfileSlug: agent.Name, ReportsTo: agent.ReportsTo, IsExecutive: agent.IsExecutive,
+		}); err != nil {
 			errs = append(errs, fmt.Errorf("register %s: %w", agent.Name, err))
 		}
 

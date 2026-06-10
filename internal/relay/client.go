@@ -188,15 +188,37 @@ func (c *Client) DeactivateAgent(name, project string) error {
 	return err
 }
 
+// AgentRegistration is the complete register_agent payload fleet owns. The
+// relay's re-register is a full-replace UPDATE: any field omitted is reset
+// server-side, so registration must always send the whole set.
+type AgentRegistration struct {
+	Name        string
+	Project     string
+	Role        string
+	ProfileSlug string
+	ReportsTo   string
+	IsExecutive bool
+}
+
 // RegisterAgent registers an agent on the relay with a profile_slug — the slug
-// is what lets dispatched tasks route to the agent. Mirrors the inline curl the
-// launch configure script issues.
+// is what lets dispatched tasks route to the agent — and no hierarchy.
 func (c *Client) RegisterAgent(name, project, role, profileSlug string) error {
+	return c.RegisterAgentFull(AgentRegistration{
+		Name: name, Project: project, Role: role, ProfileSlug: profileSlug,
+	})
+}
+
+// RegisterAgentFull registers an agent with every field fleet owns, including
+// reports_to and is_executive (the latter auto-creates the leadership team and
+// enables broadcast on the relay).
+func (c *Client) RegisterAgentFull(r AgentRegistration) error {
 	_, err := c.call("register_agent", map[string]interface{}{
-		"name":         name,
-		"project":      project,
-		"role":         role,
-		"profile_slug": profileSlug,
+		"name":         r.Name,
+		"project":      r.Project,
+		"role":         r.Role,
+		"profile_slug": r.ProfileSlug,
+		"reports_to":   r.ReportsTo,
+		"is_executive": r.IsExecutive,
 	})
 	return err
 }

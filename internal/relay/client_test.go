@@ -133,6 +133,78 @@ func TestPushVaultDoc(t *testing.T) {
 	}
 }
 
+// The relay's re-register is a full-replace UPDATE: any field fleet omits is
+// reset server-side. The full registration must therefore carry reports_to and
+// is_executive on the wire alongside profile_slug.
+func TestRegisterAgentFullSendsHierarchyFields(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"ok\":true}"}]}}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	err := client.RegisterAgentFull(AgentRegistration{
+		Name: "lead", Project: "proj", Role: "Tech Lead",
+		ProfileSlug: "lead", ReportsTo: "ceo", IsExecutive: true,
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgentFull failed: %v", err)
+	}
+
+	params, ok := gotBody["params"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected params object")
+	}
+	if params["name"] != "register_agent" {
+		t.Errorf("expected tool name 'register_agent', got %v", params["name"])
+	}
+	args, ok := params["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected arguments object")
+	}
+	want := map[string]interface{}{
+		"name": "lead", "project": "proj", "role": "Tech Lead",
+		"profile_slug": "lead", "reports_to": "ceo", "is_executive": true,
+	}
+	for k, v := range want {
+		if args[k] != v {
+			t.Errorf("expected %s=%v on the wire, got %v", k, v, args[k])
+		}
+	}
+}
+
+// The 4-arg RegisterAgent (kept for existing callers) is a full registration
+// with zero hierarchy: it must still send reports_to/is_executive explicitly
+// so the full-replace re-register resets them to fleet's truth, not garbage.
+func TestRegisterAgentSendsZeroHierarchy(t *testing.T) {
+	var gotBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"ok\":true}"}]}}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL)
+	if err := client.RegisterAgent("dev", "proj", "Dev", "dev"); err != nil {
+		t.Fatalf("RegisterAgent failed: %v", err)
+	}
+
+	args := gotBody["params"].(map[string]interface{})["arguments"].(map[string]interface{})
+	if args["profile_slug"] != "dev" {
+		t.Errorf("expected profile_slug=dev, got %v", args["profile_slug"])
+	}
+	if args["is_executive"] != false {
+		t.Errorf("expected is_executive=false on the wire, got %v", args["is_executive"])
+	}
+	if args["reports_to"] != "" {
+		t.Errorf("expected reports_to=\"\" on the wire, got %v", args["reports_to"])
+	}
+}
+
 func jsonEscape(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)

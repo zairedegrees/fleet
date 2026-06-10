@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 func testCfg(dir string) *config.FleetConfig {
@@ -23,10 +24,8 @@ type fakeRegistrar struct {
 	err error
 }
 
-func (f *fakeRegistrar) EnsureProfile(name, role, project string) error { return f.err }
-func (f *fakeRegistrar) RegisterAgent(name, project, role, profileSlug string) error {
-	return f.err
-}
+func (f *fakeRegistrar) EnsureProfile(name, role, project string) error          { return f.err }
+func (f *fakeRegistrar) RegisterAgentFull(r relay.AgentRegistration) error       { return f.err }
 func (f *fakeRegistrar) PushVaultDoc(project, path string, content []byte) error { return f.err }
 
 // The configure step must report where it logs and that it actually spawned —

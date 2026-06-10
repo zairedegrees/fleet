@@ -69,8 +69,8 @@ func TestRegisterFleetRegistersProfilesAndAgents(t *testing.T) {
 	cfg := &config.FleetConfig{
 		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
 		Agents: []config.AgentConfig{
-			{Name: "dev", Color: "green", Role: "Developer"},
-			{Name: "lead", Color: "red", Role: "Tech Lead — décide"},
+			{Name: "dev", Color: "green", Role: "Developer", ReportsTo: "lead"},
+			{Name: "lead", Color: "red", Role: "Tech Lead — décide", IsExecutive: true},
 		},
 	}
 
@@ -93,8 +93,14 @@ func TestRegisterFleetRegistersProfilesAndAgents(t *testing.T) {
 	if got := agents[0].Args; got["name"] != "dev" || got["project"] != "proj" || got["role"] != "Developer" || got["profile_slug"] != "dev" {
 		t.Errorf("register_agent args wrong: %v", got)
 	}
+	if got := agents[0].Args; got["reports_to"] != "lead" || got["is_executive"] != false {
+		t.Errorf("register_agent must carry the config hierarchy (full-replace relay resets omitted fields): %v", got)
+	}
 	if got := agents[1].Args; got["name"] != "lead" || got["role"] != "Tech Lead — décide" || got["profile_slug"] != "lead" {
 		t.Errorf("register_agent must carry non-ASCII roles intact + profile_slug: %v", got)
+	}
+	if got := agents[1].Args; got["is_executive"] != true || got["reports_to"] != "" {
+		t.Errorf("register_agent must carry is_executive for executives: %v", got)
 	}
 }
 
