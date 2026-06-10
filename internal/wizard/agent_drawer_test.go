@@ -68,8 +68,11 @@ func TestDrawerToggleAutoTalk(t *testing.T) {
 	}
 }
 
-// Editing an agent must round-trip every field save() doesn't explicitly
-// manage: changing an executive's role must not silently drop IsExecutive.
+// Pins OpenEdit prefilling the executive toggle from the agent being edited:
+// changing an executive's role must not silently drop IsExecutive. Note this
+// does NOT pin the save() base-capture — every AgentConfig field is explicitly
+// drawer-managed today, so dropping the base is an equivalent mutant no test
+// can kill (see the base field comment in agent_drawer.go).
 func TestDrawerEditPreservesIsExecutive(t *testing.T) {
 	d := newAgentDrawer()
 	d.OpenEdit(0, config.AgentConfig{
