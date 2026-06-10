@@ -156,8 +156,14 @@ func renderUsage(projects []projectUsage) string {
 		fmt.Fprintf(&b, "    [%s]  relay: %s\n", p.Project, p.RelayURL)
 		fmt.Fprintf(&b, "      agents (config): %d declared — %d polling (auto_talk), %d idle  [config]\n",
 			p.Agents, p.Polling, p.Agents-p.Polling)
-		if p.RelayWarning != "" {
-			fmt.Fprintf(&b, "      live (relay):    ?  ⚠ %s\n", p.RelayWarning)
+		// Keyed on the -1 sentinel, not the warning text — an unknown count
+		// must render "?" even if the reason got lost on the way.
+		if p.Registered < 0 || p.Active < 0 {
+			b.WriteString("      live (relay):    ?")
+			if p.RelayWarning != "" {
+				fmt.Fprintf(&b, "  ⚠ %s", p.RelayWarning)
+			}
+			b.WriteString("\n")
 		} else {
 			fmt.Fprintf(&b, "      live (relay):    %d registered · %d active · %s  [relay]\n",
 				p.Registered, p.Active, taskTotalLabel(p.Tasks))
