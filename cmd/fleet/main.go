@@ -17,7 +17,7 @@ import (
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
-const defaultRelayURL = "http://localhost:8090/mcp"
+const defaultRelayURL = config.DefaultRelayURL
 
 // loadLastConfig is a seam over config.LoadLast so command behavior around a
 // missing/corrupt last config can be unit-tested.
