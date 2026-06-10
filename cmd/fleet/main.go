@@ -206,7 +206,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	if !follow {
-		fmt.Print(tailLines(output, lines))
+		fmt.Println(tailLines(output, lines))
 		return nil
 	}
 
@@ -219,7 +219,9 @@ func tailLines(output string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	allLines := strings.Split(output, "\n")
+	// capture-pane output ends with a newline; without this trim the trailing
+	// empty element eats one of the n requested lines.
+	allLines := strings.Split(strings.TrimSuffix(output, "\n"), "\n")
 	if len(allLines) > n {
 		allLines = allLines[len(allLines)-n:]
 	}

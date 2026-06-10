@@ -86,6 +86,17 @@ func TestTailLines(t *testing.T) {
 	}
 }
 
+// Real capture-pane output ends with a newline; the trailing empty element
+// after the split must not eat one of the requested lines (-n 50 showed 49).
+func TestTailLinesTrailingNewlineKeepsFullCount(t *testing.T) {
+	if got := tailLines("a\nb\nc\n", 2); got != "b\nc" {
+		t.Errorf("want the last 2 real lines \"b\\nc\", got %q", got)
+	}
+	if got := tailLines("a\nb\nc\n", 3); got != "a\nb\nc" {
+		t.Errorf("want all 3 real lines, got %q", got)
+	}
+}
+
 // `fleet logs -n -5 dev` reached tailLines with a negative n and panicked on
 // the slice bound; non-positive n must yield no lines instead.
 func TestTailLinesClampsNonPositiveN(t *testing.T) {
