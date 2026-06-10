@@ -84,9 +84,11 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
 	generateWakeScript(cfg)
 	relayURL := cfg.Project.RelayURL
 	if relayURL == "" {
-		relayURL = "http://localhost:8090/mcp"
+		relayURL = config.DefaultRelayURL
 	}
-	return configureAgents(cfg, config.FleetDir(), spawnDetached, relay.NewClient(relayURL))
+	// Registration runs synchronously before fleet exits: keep the timeout
+	// short so a hanging relay can't block the launch for 10s per call.
+	return configureAgents(cfg, config.FleetDir(), spawnDetached, relay.NewClientWithTimeout(relayURL, registerTimeout))
 }
 
 // spawnDetached starts the configure script as a detached process that survives

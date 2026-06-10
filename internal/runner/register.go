@@ -4,9 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
 )
+
+// registerTimeout caps each synchronous registration call so a hanging relay
+// can't stall the launch (the status client uses the same idea at 2s).
+const registerTimeout = 3 * time.Second
 
 // relayRegistrar is the slice of relay.Client the launch registration needs —
 // a seam so registerFleet is testable against httptest or a fake.
