@@ -68,7 +68,11 @@ func registerFleet(cfg *config.FleetConfig, rc relayRegistrar) error {
 			}
 			pushed++
 		}
-		fmt.Printf("  ✓ vault injected for %s: %d docs\n", agent.Name, pushed)
+		if pushed == len(docs) {
+			fmt.Printf("  ✓ vault injected for %s: %d docs\n", agent.Name, pushed)
+		} else {
+			fmt.Printf("  ⚠ vault for %s: %d/%d docs pushed\n", agent.Name, pushed, len(docs))
+		}
 	}
 
 	return errors.Join(errs...)

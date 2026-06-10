@@ -146,6 +146,73 @@ func TestRegisterFleetPushesVaultDocs(t *testing.T) {
 	}
 }
 
+// captureStdout redirects os.Stdout around fn and returns what was printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	fn()
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// "✓ vault injected" used to print unconditionally — even "✓ ... 0 docs"
+// after a total push failure. ✓ is only honest when every doc was pushed;
+// anything less is a ⚠ with the real N/M count.
+func TestRegisterFleetVaultOutputHonesty(t *testing.T) {
+	vaultCfg := func(t *testing.T) *config.FleetConfig {
+		dir := t.TempDir()
+		vaultShared := filepath.Join(dir, ".fleet", "vault", "shared")
+		if err := os.MkdirAll(vaultShared, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(vaultShared, "arch.md"), []byte("# Arch"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return &config.FleetConfig{
+			Project: config.ProjectConfig{Name: "proj", Cwd: dir},
+			Agents:  []config.AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+		}
+	}
+
+	t.Run("checkmark only when every doc pushed", func(t *testing.T) {
+		stubExec(t)
+		srv, _ := captureRelay(t)
+		cfg := vaultCfg(t)
+		out := captureStdout(t, func() {
+			if err := registerFleet(cfg, relay.NewClient(srv.URL)); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "✓ vault injected for dev: 1 docs") {
+			t.Errorf("expected ✓ for a full push, got:\n%s", out)
+		}
+	})
+
+	t.Run("warning with real count on failure", func(t *testing.T) {
+		stubExec(t)
+		srv, _ := captureRelay(t, "set_memory")
+		cfg := vaultCfg(t)
+		out := captureStdout(t, func() {
+			if err := registerFleet(cfg, relay.NewClient(srv.URL)); err == nil {
+				t.Error("expected the vault failure to surface")
+			}
+		})
+		if strings.Contains(out, "✓ vault injected") {
+			t.Errorf("✓ must not lie when docs failed, got:\n%s", out)
+		}
+		if !strings.Contains(out, "⚠ vault for dev: 0/1 docs pushed") {
+			t.Errorf("expected '⚠ vault for dev: 0/1 docs pushed', got:\n%s", out)
+		}
+	})
+}
+
 // A partially-failed launch must not leave ghosts on the relay: an agent whose
 // tmux session never started is skipped entirely (no profile, no register, no
 // vault) and named honestly in the joined error.
