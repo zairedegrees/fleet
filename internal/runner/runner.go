@@ -82,13 +82,24 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
 	// wake.sh is independent of the configure run; generate it up front.
 	generateWakeScript(cfg)
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = config.DefaultRelayURL
+	return configureAgents(cfg, config.FleetDir(), spawnDetached, newRegistrar(resolveRelayURL(cfg)))
+}
+
+// resolveRelayURL returns the project's relay URL, falling back to the default
+// when the config field is empty.
+func resolveRelayURL(cfg *config.FleetConfig) string {
+	if cfg.Project.RelayURL != "" {
+		return cfg.Project.RelayURL
 	}
-	// Registration runs synchronously before fleet exits: keep the timeout
-	// short so a hanging relay can't block the launch for 10s per call.
-	return configureAgents(cfg, config.FleetDir(), spawnDetached, relay.NewClientWithTimeout(relayURL, registerTimeout))
+	return config.DefaultRelayURL
+}
+
+// newRegistrar is the registrar-construction seam — tests swap it to observe
+// which relay URL the launch registration targets without a live relay.
+// Registration runs synchronously before fleet exits: the timeout stays short
+// so a hanging relay can't block the launch for 10s per call.
+var newRegistrar = func(relayURL string) relayRegistrar {
+	return relay.NewClientWithTimeout(relayURL, registerTimeout)
 }
 
 // spawnDetached starts the configure script as a detached process that survives
@@ -136,15 +147,10 @@ func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string
 // because it waits up to ~90s per pane and must survive fleet's exit.
 // Kept pure so the talk-gating logic is unit-testable.
 func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = config.DefaultRelayURL
-	}
-
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
 	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
-	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", relayURL))
+	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", resolveRelayURL(cfg)))
 	script.WriteString("wait_prompt() {\n")
 	script.WriteString("  local session=$1 timeout=$2 elapsed=0\n")
 	script.WriteString("  while [ $elapsed -lt $timeout ]; do\n")

@@ -28,6 +28,55 @@ func (f *fakeRegistrar) EnsureProfile(name, role, project string) error         
 func (f *fakeRegistrar) RegisterAgentFull(r relay.AgentRegistration) error       { return f.err }
 func (f *fakeRegistrar) PushVaultDoc(project, path string, content []byte) error { return f.err }
 
+// A mutant that ignores cfg.Project.RelayURL and registers against the default
+// relay must not survive: launch registration has to hit the config's URL.
+func TestConfigureAgentsAsyncRegistersAgainstConfigRelayURL(t *testing.T) {
+	stubExec(t)
+	t.Setenv("HOME", t.TempDir())
+	srv, calls := captureRelay(t)
+	cfg := testCfg(t.TempDir())
+	cfg.Project.RelayURL = srv.URL
+
+	if _, err := ConfigureAgentsAsync(cfg); err != nil {
+		t.Fatalf("ConfigureAgentsAsync failed: %v", err)
+	}
+	if got := len(callsFor(*calls, "register_agent")); got != 1 {
+		t.Errorf("expected 1 register_agent call at the config relay URL, got %d", got)
+	}
+}
+
+// The registrar targets the config URL verbatim, and the default ONLY when the
+// config field is empty — pinned via the construction seam so the empty case
+// never touches a live relay on the default URL.
+func TestConfigureAgentsAsyncRelayURLResolution(t *testing.T) {
+	stubExec(t)
+	t.Setenv("HOME", t.TempDir())
+	var gotURL string
+	orig := newRegistrar
+	newRegistrar = func(url string) relayRegistrar {
+		gotURL = url
+		return &fakeRegistrar{}
+	}
+	t.Cleanup(func() { newRegistrar = orig })
+
+	cfg := testCfg(t.TempDir())
+	cfg.Project.RelayURL = "http://relay.example:7777/mcp"
+	if _, err := ConfigureAgentsAsync(cfg); err != nil {
+		t.Fatalf("ConfigureAgentsAsync failed: %v", err)
+	}
+	if gotURL != "http://relay.example:7777/mcp" {
+		t.Errorf("registrar must target the config URL, got %q", gotURL)
+	}
+
+	cfg.Project.RelayURL = ""
+	if _, err := ConfigureAgentsAsync(cfg); err != nil {
+		t.Fatalf("ConfigureAgentsAsync failed: %v", err)
+	}
+	if gotURL != config.DefaultRelayURL {
+		t.Errorf("empty config must fall back to %s, got %q", config.DefaultRelayURL, gotURL)
+	}
+}
+
 // The configure step must report where it logs and that it actually spawned —
 // instead of fire-and-forgetting with a void signature.
 func TestConfigureAgentsReturnsLogPathAndSpawns(t *testing.T) {
