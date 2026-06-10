@@ -10,7 +10,7 @@
 fleet                          # interactive wizard: pick a project, a team, launch
 fleet dispatch "fix the failing auth test" --to auditor
 fleet logs dev -f              # follow an agent's terminal
-fleet --status                 # see who is running and who is idle
+fleet --status                 # relay-backed status: sessions, registration, task counts
 ```
 
 ## Why
@@ -65,7 +65,7 @@ Run `fleet --doctor` to verify and get install hints.
 ```bash
 fleet                         # interactive wizard
 fleet --last                  # relaunch the last saved fleet
-fleet --status                # list active sessions (busy / idle)
+fleet --status                # sessions + relay state and task counts per agent
 fleet --kill                  # stop the last project's fleet
 fleet --kill-all              # stop every fleet across all projects
 fleet --doctor                # check prerequisites
@@ -75,6 +75,8 @@ fleet logs <agent> [-n 50] [-f]        # stream an agent's terminal
 fleet add --name qa --role "Testing" --reports-to dev
 fleet stop <agent>                     # graceful /exit, then kill if needed
 ```
+
+`fleet --status` uses the relay as the source of truth: each tmux session shows its relay registration and workload (`[relay: active · 2 task(s)]`), sessions the relay does not know show `[relay: unregistered]`, and relay-registered agents without a session appear as ghosts (`no tmux session`). If the relay is down, status degrades to a `⚠ relay unavailable` warning followed by the tmux sessions only.
 
 ## Architecture
 
