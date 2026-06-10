@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
@@ -170,6 +174,143 @@ func TestBuildStatusUnknownSessionIsHonest(t *testing.T) {
 		if p == "mystery" {
 			t.Errorf("relay must not be queried with a guessed project name, got %v", fake.listCalls)
 		}
+	}
+}
+
+// P2: zero tmux sessions must still surface relay-registered ghosts — the old
+// early return made them invisible.
+func TestBuildStatusRendersGhostsWithZeroSessions(t *testing.T) {
+	fake := &fakeQuerier{
+		agents: map[string][]relay.Agent{"demo": {{Name: "ghost", Status: "idle"}}},
+		counts: map[string]int{"demo/ghost": 0},
+	}
+	installFakeRelay(t, fake)
+
+	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL)
+	if warning != "" {
+		t.Fatalf("unexpected warning: %q", warning)
+	}
+	if len(projects) != 1 || projects[0].Project != "demo" {
+		t.Fatalf("expected ghost project demo, got %+v", projects)
+	}
+	g := projects[0].Agents[0]
+	if g.Agent != "ghost" || g.HasSession || g.RelayState != "idle" || g.Tasks != 0 {
+		t.Errorf("expected relay-only ghost with state + count, got %+v", g)
+	}
+}
+
+// P2: zero sessions + relay down — no invented projects, but the degraded
+// warning must surface so the user knows ghosts may be hidden.
+func TestBuildStatusZeroSessionsRelayDownWarns(t *testing.T) {
+	fake := &fakeQuerier{listErr: errors.New("connection refused")}
+	installFakeRelay(t, fake)
+
+	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL)
+	if len(projects) != 0 {
+		t.Errorf("expected no projects when relay is down and no sessions, got %+v", projects)
+	}
+	if !strings.Contains(warning, "relay unavailable") {
+		t.Errorf("expected degraded warning, got %q", warning)
+	}
+}
+
+// P2: each project's relay URL comes from its OWN saved config, falling back
+// to the default — one project's relay must not answer for another's.
+func TestRelayURLForPrefersProjectConfig(t *testing.T) {
+	configs := []*config.FleetConfig{
+		{Project: config.ProjectConfig{Name: "a", RelayURL: "http://a.example/mcp"}},
+		{Project: config.ProjectConfig{Name: "b"}},
+	}
+	if got := relayURLFor("a", configs, "http://fallback/mcp"); got != "http://a.example/mcp" {
+		t.Errorf("project a must use its own relay URL, got %q", got)
+	}
+	if got := relayURLFor("b", configs, "http://fallback/mcp"); got != "http://fallback/mcp" {
+		t.Errorf("project b has no URL, must fall back, got %q", got)
+	}
+	if got := relayURLFor("zzz", configs, "http://fallback/mcp"); got != "http://fallback/mcp" {
+		t.Errorf("unknown project must fall back, got %q", got)
+	}
+}
+
+func TestBuildStatusUsesPerProjectRelayURL(t *testing.T) {
+	fake := &fakeQuerier{}
+	var urls []string
+	orig := newStatusClient
+	t.Cleanup(func() { newStatusClient = orig })
+	newStatusClient = func(url string) relayQuerier {
+		urls = append(urls, url)
+		return fake
+	}
+
+	configs := []*config.FleetConfig{
+		{Project: config.ProjectConfig{Name: "a", RelayURL: "http://a.example/mcp"}},
+		{Project: config.ProjectConfig{Name: "b"}},
+	}
+	buildStatus([]string{"fleet-a-dev", "fleet-b-dev"}, configs, "http://fallback/mcp")
+
+	want := map[string]bool{"http://a.example/mcp": true, "http://fallback/mcp": true}
+	for _, u := range urls {
+		delete(want, u)
+	}
+	if len(want) != 0 {
+		t.Errorf("expected a client per project relay URL, missing %v (got %v)", want, urls)
+	}
+}
+
+// P2: a hanging relay must not stall --status for the default client's 10s —
+// status queries get a snappy ~2s timeout.
+func TestStatusClientTimesOutFast(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	start := time.Now()
+	_, err := newStatusClient(server.URL).ListAgents("proj")
+	if err == nil {
+		t.Fatal("expected a timeout error from a hanging relay, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("status client must time out fast, took %v", elapsed)
+	}
+}
+
+// P2: agents sharing a profile slug must share ONE task-count fetch — same
+// count for both, no duplicate relay calls.
+func TestFetchTaskCountsMemoizesSharedProfiles(t *testing.T) {
+	fake := &fakeQuerier{counts: map[string]int{"proj/dev": 3}}
+	agents := []relay.Agent{
+		{Name: "dev-1", ProfileSlug: "dev"},
+		{Name: "dev-2", ProfileSlug: "dev"},
+		{Name: "ops"},
+	}
+
+	tasks := fetchTaskCounts(fake, "proj", agents)
+	if tasks["dev-1"] != 3 || tasks["dev-2"] != 3 {
+		t.Errorf("agents sharing a slug must share the count, got %v", tasks)
+	}
+	if len(fake.countCalls) != 2 {
+		t.Errorf("expected 1 call per unique profile (dev, ops), got %v", fake.countCalls)
+	}
+}
+
+// A failed count fetch leaves no entry (renders "tasks: ?") and is not
+// retried for every agent sharing the slug.
+func TestFetchTaskCountsFailureIsNotFakedOrRetried(t *testing.T) {
+	fake := &fakeQuerier{countErr: errors.New("boom")}
+	agents := []relay.Agent{
+		{Name: "dev-1", ProfileSlug: "dev"},
+		{Name: "dev-2", ProfileSlug: "dev"},
+	}
+
+	tasks := fetchTaskCounts(fake, "proj", agents)
+	if len(tasks) != 0 {
+		t.Errorf("failed fetch must not fake a count, got %v", tasks)
+	}
+	if len(fake.countCalls) != 1 {
+		t.Errorf("failed fetch must not be retried per agent, got %v", fake.countCalls)
 	}
 }
 

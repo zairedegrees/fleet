@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
@@ -14,6 +15,10 @@ import (
 // real project — and therefore its relay registration — is unknown, so status
 // says "?" instead of asserting "unregistered".
 const relayStateUnknown = "?"
+
+// statusRelayTimeout keeps `fleet --status` snappy: a hanging relay must not
+// stall the listing for the default client's 10s.
+const statusRelayTimeout = 2 * time.Second
 
 // agentStatus is the per-agent view rendered by `fleet --status`: relay
 // registration state + task count from the relay (the source of truth), and
@@ -40,7 +45,7 @@ type relayQuerier interface {
 }
 
 var newStatusClient = func(url string) relayQuerier {
-	return relay.NewClient(url)
+	return relay.NewClientWithTimeout(url, statusRelayTimeout)
 }
 
 // loadSavedConfigs reads every saved project config — they are what lets
@@ -67,17 +72,20 @@ func runStatus() error {
 	if err != nil {
 		return fmt.Errorf("cannot list tmux sessions: %w", err)
 	}
-	if len(sessions) == 0 {
+
+	defaultURL := defaultRelayURL
+	if cfg, err := loadLastConfig(); err == nil && cfg.Project.RelayURL != "" {
+		defaultURL = cfg.Project.RelayURL
+	}
+
+	projects, warning := buildStatus(sessions, loadSavedConfigs(), defaultURL)
+	if len(sessions) == 0 && len(projects) == 0 {
+		if warning != "" {
+			fmt.Printf("  ⚠ %s\n\n", warning)
+		}
 		fmt.Println("  No fleet sessions running.")
 		return nil
 	}
-
-	relayURL := defaultRelayURL
-	if cfg, err := loadLastConfig(); err == nil && cfg.Project.RelayURL != "" {
-		relayURL = cfg.Project.RelayURL
-	}
-
-	projects, warning := buildStatus(sessions, loadSavedConfigs(), relayURL)
 	fmt.Print(renderStatus(projects, len(sessions), warning))
 	return nil
 }
@@ -86,7 +94,9 @@ func runStatus() error {
 // status view. Sessions resolve against KNOWN project names so dash-named
 // agents and dot-projects group under the real project the relay was
 // registered with; sessions matching no known project render an honest "?".
-func buildStatus(sessions []string, configs []*config.FleetConfig, relayURL string) ([]projectStatus, string) {
+// Known projects are queried on their own relay URL even with zero sessions,
+// so relay-only ghosts stay visible.
+func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL string) ([]projectStatus, string) {
 	var knownNames []string
 	for _, c := range configs {
 		knownNames = append(knownNames, c.Project.Name)
@@ -103,10 +113,17 @@ func buildStatus(sessions []string, configs []*config.FleetConfig, relayURL stri
 		}
 		grouped[project] = append(grouped[project], s)
 	}
+	for _, name := range knownNames {
+		if _, seen := grouped[name]; !seen {
+			grouped[name] = nil
+			knownGroup[name] = true
+			order = append(order, name)
+		}
+	}
 
-	client := newStatusClient(relayURL)
-	relayUp := true
-	relayWarning := ""
+	clients := make(map[string]relayQuerier)
+	relayDown := make(map[string]bool)
+	var warnings []string
 	var projects []projectStatus
 	for _, project := range order {
 		if !knownGroup[project] {
@@ -118,35 +135,75 @@ func buildStatus(sessions []string, configs []*config.FleetConfig, relayURL stri
 			projects = append(projects, projectStatus{Project: project, Agents: agents})
 			continue
 		}
+
+		url := relayURLFor(project, configs, defaultURL)
+		client, ok := clients[url]
+		if !ok {
+			client = newStatusClient(url)
+			clients[url] = client
+		}
+
+		relayUp := !relayDown[url]
 		var relayAgents []relay.Agent
 		if relayUp {
 			agents, err := client.ListAgents(project)
 			if err != nil {
+				relayDown[url] = true
 				relayUp = false
-				relayWarning = fmt.Sprintf("relay unavailable at %s — showing tmux sessions only (%v)", relayURL, err)
+				warnings = append(warnings, fmt.Sprintf("relay unavailable at %s — showing tmux sessions only (%v)", url, err))
 			} else {
 				relayAgents = agents
 			}
 		}
-		tasks := make(map[string]int)
+		var tasks map[string]int
 		if relayUp {
-			for _, a := range relayAgents {
-				profile := a.ProfileSlug
-				if profile == "" {
-					profile = a.Name
-				}
-				if n, err := client.CountActiveTasks(project, profile); err == nil {
-					tasks[a.Name] = n
-				}
-			}
+			tasks = fetchTaskCounts(client, project, relayAgents)
 		}
-		projects = append(projects, projectStatus{
-			Project: project,
-			Agents:  mergeAgents(project, grouped[project], relayAgents, tasks, relayUp),
-		})
+		merged := mergeAgents(project, grouped[project], relayAgents, tasks, relayUp)
+		if len(merged) == 0 {
+			continue
+		}
+		projects = append(projects, projectStatus{Project: project, Agents: merged})
 	}
 
-	return projects, relayWarning
+	return projects, strings.Join(warnings, "; ")
+}
+
+// relayURLFor resolves a project's relay URL from its own saved config,
+// falling back to the given default — one project's relay must not answer for
+// another's.
+func relayURLFor(project string, configs []*config.FleetConfig, fallback string) string {
+	for _, c := range configs {
+		if c.Project.Name == project && c.Project.RelayURL != "" {
+			return c.Project.RelayURL
+		}
+	}
+	return fallback
+}
+
+// fetchTaskCounts queries the relay once per unique profile slug and fans the
+// count out to every agent sharing it — shared slugs must not double-query.
+// Failed fetches leave no entry, so the agent renders an honest "tasks: ?".
+func fetchTaskCounts(client relayQuerier, project string, agents []relay.Agent) map[string]int {
+	byProfile := make(map[string]int)
+	attempted := make(map[string]bool)
+	counts := make(map[string]int)
+	for _, a := range agents {
+		profile := a.ProfileSlug
+		if profile == "" {
+			profile = a.Name
+		}
+		if !attempted[profile] {
+			attempted[profile] = true
+			if n, err := client.CountActiveTasks(project, profile); err == nil {
+				byProfile[profile] = n
+			}
+		}
+		if n, ok := byProfile[profile]; ok {
+			counts[a.Name] = n
+		}
+	}
+	return counts
 }
 
 // mergeAgents unions the tmux sessions of a project with its relay-registered

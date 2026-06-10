@@ -50,11 +50,15 @@ func TestCountActiveTasks(t *testing.T) {
 	}
 }
 
-// The relay truncates the tasks array at `limit` — when a count field is
-// present it is authoritative over len(tasks).
-func TestCountActiveTasksPrefersCountField(t *testing.T) {
+// The relay truncates the tasks array to `limit` (default 50) and computes
+// `count` AFTER truncation — count is a page length, not a board total. The
+// only way to keep busy boards honest is to request an explicit high limit.
+func TestCountActiveTasksSendsHighLimit(t *testing.T) {
+	var gotBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tasksJSON := `{"tasks":[{"id":"t-1","status":"pending"}],"count":7}`
+		data, _ := io.ReadAll(r.Body)
+		json.Unmarshal(data, &gotBody)
+		tasksJSON := `{"tasks":[{"id":"t-1"},{"id":"t-2"},{"id":"t-3"}],"count":3}`
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`, jsonEscape(tasksJSON))
 	}))
@@ -64,8 +68,24 @@ func TestCountActiveTasksPrefersCountField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountActiveTasks failed: %v", err)
 	}
-	if n != 7 {
-		t.Errorf("expected count field (7) to win over len(tasks), got %d", n)
+	if n != 3 {
+		t.Errorf("expected count == page length (3), got %d", n)
+	}
+
+	params, ok := gotBody["params"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected params object")
+	}
+	args, ok := params["arguments"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected arguments object")
+	}
+	limit, ok := args["limit"].(float64)
+	if !ok {
+		t.Fatal("expected an explicit limit in the request — without it the relay defaults to 50 and counts silently cap")
+	}
+	if limit < 500 {
+		t.Errorf("limit must be high enough not to cap real workloads, got %v", limit)
 	}
 }
 
