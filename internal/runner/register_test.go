@@ -146,6 +146,76 @@ func TestRegisterFleetPushesVaultDocs(t *testing.T) {
 	}
 }
 
+// The profile must exist BEFORE the agent registers with its profile_slug —
+// per agent, not all-profiles-then-all-agents. Pins the call order an
+// order-swap mutant survived.
+func TestRegisterFleetProfileBeforeAgentOrder(t *testing.T) {
+	stubExec(t)
+	srv, calls := captureRelay(t)
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
+		Agents: []config.AgentConfig{
+			{Name: "dev", Color: "green", Role: "Dev"},
+			{Name: "ops", Color: "blue", Role: "Ops"},
+		},
+	}
+
+	if err := registerFleet(cfg, relay.NewClient(srv.URL)); err != nil {
+		t.Fatalf("registerFleet failed: %v", err)
+	}
+
+	var seq []string
+	for _, c := range *calls {
+		if c.Tool == "register_profile" || c.Tool == "register_agent" {
+			seq = append(seq, fmt.Sprintf("%s:%v", c.Tool, c.Args["name"]))
+		}
+	}
+	want := "register_profile:dev,register_agent:dev,register_profile:ops,register_agent:ops"
+	if got := strings.Join(seq, ","); got != want {
+		t.Errorf("registration call order wrong:\n got %s\nwant %s", got, want)
+	}
+}
+
+// A swallowed EnsureProfile error survived the suite: the failure must be
+// named in the joined error, and must not block the agent's registration.
+func TestRegisterFleetNamesProfileFailure(t *testing.T) {
+	stubExec(t)
+	srv, calls := captureRelay(t, "register_profile")
+	cfg := testCfg(t.TempDir())
+
+	err := registerFleet(cfg, relay.NewClient(srv.URL))
+	if err == nil || !strings.Contains(err.Error(), "profile dev") {
+		t.Errorf("expected the failed profile named in the error, got: %v", err)
+	}
+	if got := len(callsFor(*calls, "register_agent")); got != 1 {
+		t.Errorf("a profile failure must not block register_agent, got %d calls", got)
+	}
+}
+
+// A swallowed PushVaultDoc error survived the suite: the joined error must
+// name the doc and the agent.
+func TestRegisterFleetNamesVaultDocFailure(t *testing.T) {
+	stubExec(t)
+	srv, _ := captureRelay(t, "set_memory")
+	dir := t.TempDir()
+	vaultShared := filepath.Join(dir, ".fleet", "vault", "shared")
+	if err := os.MkdirAll(vaultShared, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vaultShared, "arch.md"), []byte("# Arch"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: dir},
+		Agents:  []config.AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+	}
+
+	err := registerFleet(cfg, relay.NewClient(srv.URL))
+	if err == nil || !strings.Contains(err.Error(), "vault doc shared/arch.md for dev") {
+		t.Errorf("expected the failed vault doc named in the error, got: %v", err)
+	}
+}
+
 // captureStdout redirects os.Stdout around fn and returns what was printed.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
