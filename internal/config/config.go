@@ -68,14 +68,42 @@ type AgentConfig struct {
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
+// unsafeRoleChars are the only characters forbidden in a free-text agent role:
+// those that can break out of the quoting in the sinks the role reaches
+// (single/double-quoted bash, tmux send-keys, curl JSON). Everything else —
+// including accents, em-dashes, "&" and ordinary punctuation — stays inert
+// inside the quotes and is allowed, so international prose roles work.
+const unsafeRoleChars = "\"'`$\\\n\r\t"
+
 var validColors = map[string]bool{
 	"green": true, "orange": true, "blue": true, "red": true,
 	"purple": true, "pink": true, "cyan": true, "yellow": true,
 }
 
+// NormalizeProjectName maps an arbitrary path basename to a name that satisfies
+// validName: any character outside [a-zA-Z0-9_-] becomes '-', then leading
+// non-alphanumeric and trailing '-' are trimmed. Keeps benign folders like
+// "site.com" or "My App" usable instead of failing Validate().
+func NormalizeProjectName(raw string) string {
+	var b strings.Builder
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	// validName requires the first character to be alphanumeric.
+	return strings.TrimRight(strings.TrimLeft(b.String(), "-_"), "-")
+}
+
 func (cfg *FleetConfig) Validate() error {
 	if cfg.Project.Name == "" {
 		return fmt.Errorf("project name is required")
+	}
+	if !validName.MatchString(cfg.Project.Name) {
+		return fmt.Errorf("invalid project name %q: must be alphanumeric with hyphens/underscores", cfg.Project.Name)
 	}
 	if len(cfg.Agents) == 0 {
 		return fmt.Errorf("at least one agent is required")
@@ -85,6 +113,9 @@ func (cfg *FleetConfig) Validate() error {
 	for _, a := range cfg.Agents {
 		if !validName.MatchString(a.Name) {
 			return fmt.Errorf("invalid agent name %q: must be alphanumeric with hyphens/underscores", a.Name)
+		}
+		if strings.ContainsAny(a.Role, unsafeRoleChars) {
+			return fmt.Errorf("invalid role %q for agent %q: contains unsafe characters", a.Role, a.Name)
 		}
 		if !validColors[a.Color] {
 			return fmt.Errorf("invalid color %q for agent %q", a.Color, a.Name)

@@ -12,6 +12,13 @@ import (
 	"github.com/zairedegrees/fleet/internal/config"
 )
 
+// deriveProjectName turns a chosen filesystem path into a project name that is
+// safe to interpolate into the generated tmux/shell/AppleScript and that passes
+// config.Validate() — folders like "site.com" or "My App" would otherwise fail.
+func deriveProjectName(path string) string {
+	return config.NormalizeProjectName(filepath.Base(path))
+}
+
 // PresetSelectedMsg is sent when a preset is selected.
 type PresetSelectedMsg struct {
 	Preset Preset
@@ -258,7 +265,7 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 
 		// Only derive name from path for new projects (projName not already set)
 		if p.projName == "" {
-			p.projName = filepath.Base(expanded)
+			p.projName = deriveProjectName(expanded)
 		}
 
 		// Create directory if it doesn't exist

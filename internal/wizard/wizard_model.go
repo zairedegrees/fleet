@@ -23,6 +23,7 @@ type wizardModel struct {
 	relayClient *relay.Client
 	width       int
 	height      int
+	status      string // surfaced relay/scan failure, shown in View
 
 	// Result
 	quitting  bool
@@ -73,7 +74,10 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Also try relay for any agents not in the config
 		if m.relayClient != nil {
-			if relayAgents, err := m.relayClient.ListAgents(cfg.Project.Name); err == nil {
+			relayAgents, err := m.relayClient.ListAgents(cfg.Project.Name)
+			if err != nil {
+				m.status = "relay: " + err.Error()
+			} else {
 				seen := make(map[string]bool)
 				for _, item := range items {
 					seen[item.agent.Name] = true
@@ -116,7 +120,10 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Query relay for existing agents
 		if m.relayClient != nil {
-			if relayAgents, err := m.relayClient.ListAgents(msg.Name); err == nil && len(relayAgents) > 0 {
+			relayAgents, err := m.relayClient.ListAgents(msg.Name)
+			if err != nil {
+				m.status = "relay: " + err.Error()
+			} else if len(relayAgents) > 0 {
 				var items []agentItem
 				for i, ra := range relayAgents {
 					color := ra.Color
@@ -146,7 +153,10 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Run scanner on project path
 			path := m.project.ProjectPath()
 			if path != "" {
-				if result, err := scanner.Scan(path); err == nil {
+				result, err := scanner.Scan(path)
+				if err != nil {
+					m.status = "scan: " + err.Error()
+				} else {
 					suggestions := scanner.SuggestAgents(result)
 					var items []agentItem
 					for _, s := range suggestions {
@@ -290,6 +300,12 @@ func (m wizardModel) View() string {
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftView, rightView)
 	sb.WriteString(content)
 	sb.WriteString("\n")
+
+	// Status / error line — surfaces relay/scan failures that were swallowed.
+	if m.status != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+		sb.WriteString(statusStyle.Render("  ⚠ "+m.status) + "\n")
+	}
 
 	// Help bar
 	var help string

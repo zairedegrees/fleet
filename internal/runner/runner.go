@@ -76,20 +76,55 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 // ConfigureAgentsAsync generates a shell script that configures agents after
 // Claude boots, then launches it as a detached process that survives fleet exit.
 // Logs output to ~/.fleet/logs/configure-{timestamp}.log
-func ConfigureAgentsAsync(cfg *config.FleetConfig) {
-	logDir := filepath.Join(config.FleetDir(), "logs")
-	os.MkdirAll(logDir, 0755)
+func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
+	// wake.sh is independent of the configure run; generate it up front.
+	generateWakeScript(cfg)
+	return configureAgents(cfg, config.FleetDir(), spawnDetached)
+}
+
+// spawnDetached starts the configure script as a detached process that survives
+// fleet exit.
+func spawnDetached(scriptPath string) error {
+	cmd := exec.Command("bash", scriptPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd.Start()
+}
+
+// configureAgents writes the configure script under fleetDir and runs it via
+// spawn, returning the log path plus any setup/spawn error. Taking fleetDir and
+// spawn as parameters makes the error paths unit-testable without touching
+// ~/.fleet or actually running bash.
+func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string) error) (string, error) {
+	logDir := filepath.Join(fleetDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return "", fmt.Errorf("create log dir: %w", err)
+	}
 	rotateConfigLogs(logDir, 5)
 
 	timestamp := time.Now().Format("20060102-150405")
 	logPath := filepath.Join(logDir, fmt.Sprintf("configure-%s.log", timestamp))
-	scriptPath := filepath.Join(config.FleetDir(), "configure-agents.sh")
+	scriptPath := filepath.Join(fleetDir, "configure-agents.sh")
 
 	relayURL := cfg.Project.RelayURL
 	if relayURL == "" {
 		relayURL = "http://localhost:8090/mcp"
 	}
 
+	if err := os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, relayURL, logPath)), 0755); err != nil {
+		return logPath, fmt.Errorf("write configure script: %w", err)
+	}
+
+	if err := spawn(scriptPath); err != nil {
+		return logPath, fmt.Errorf("start configure script: %w", err)
+	}
+	return logPath, nil
+}
+
+// buildConfigureScript returns the bash script that configures each agent after
+// Claude boots: rename/color, relay register + profile_slug, vault injection, and
+// — only for agents with AutoTalk=true — the continuous `/relay talk` poll loop.
+// Kept pure (reads only vault docs) so the talk-gating logic is unit-testable.
+func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) string {
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
 	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
@@ -141,7 +176,12 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 		if agent.ReportsTo != "" {
 			registerCmd += " Reports to " + agent.ReportsTo + "."
 		}
-		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s' Enter\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
+		// Type the command, let the input + skill autocomplete settle, then submit
+		// with a SEPARATE Enter. A long /relay command sent as '...' Enter in one
+		// keystroke is typed but never submitted (the Enter is swallowed).
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s'\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
+		script.WriteString("  sleep 1\n")
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
 		script.WriteString("  sleep 3\n")
 
 		// Set profile_slug via direct relay call — without this, agents can't see dispatched tasks
@@ -166,9 +206,11 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 			script.WriteString(fmt.Sprintf("  echo 'vault injected for %s: %d docs'\n", agent.Name, len(docs)))
 		}
 
-		if !agent.IsExecutive {
+		if agent.AutoTalk {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
-			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter\n", session))
+			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk'\n", session))
+			script.WriteString("  sleep 1\n")
+			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
 		}
 
 		script.WriteString(fmt.Sprintf("  echo '✓ %s configured'\n", session))
@@ -179,16 +221,7 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) {
 
 	script.WriteString("echo 'all agents configured'\n")
 
-	os.WriteFile(scriptPath, []byte(script.String()), 0755)
-
-	// Generate wake.sh — lets the boss agent wake other agents from Claude Code
-	// Usage: ! bash ~/.fleet/wake.sh <agent-name>
-	generateWakeScript(cfg)
-
-	// Launch as detached process — survives fleet exit
-	cmd := exec.Command("bash", scriptPath)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Start()
+	return script.String()
 }
 
 // generateWakeScript creates ~/.fleet/wake.sh for boss agents to wake workers.
