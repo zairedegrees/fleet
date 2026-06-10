@@ -46,16 +46,22 @@ func installHint(goos, pkg string) string {
 }
 
 func checkTmux(goos string) Check {
-	c := Check{Name: "tmux"}
 	out, err := exec.Command("tmux", "-V").Output()
-	if err != nil {
+	return tmuxCheck(goos, strings.TrimSpace(string(out)), err)
+}
+
+// tmuxCheck builds the tmux check result from the probe outcome; pure so the
+// goos → installHint wiring is testable without touching PATH.
+func tmuxCheck(goos, version string, probeErr error) Check {
+	c := Check{Name: "tmux"}
+	if probeErr != nil {
 		c.Status = "missing"
 		c.Detail = "tmux not installed"
 		c.FixCmd = installHint(goos, "tmux")
 		return c
 	}
 	c.Status = "ok"
-	c.Detail = strings.TrimSpace(string(out))
+	c.Detail = version
 	return c
 }
 
