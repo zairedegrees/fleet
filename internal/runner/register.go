@@ -33,6 +33,12 @@ func registerFleet(cfg *config.FleetConfig, rc relayRegistrar) error {
 	vaultDir := filepath.Join(cfg.Project.Cwd, ".fleet", "vault")
 
 	for _, agent := range cfg.Agents {
+		// A partially-failed launch must not leave ghosts on the relay:
+		// only register agents whose tmux session actually exists.
+		if !HasSession(project, agent.Name) {
+			errs = append(errs, fmt.Errorf("skip register %s: no tmux session", agent.Name))
+			continue
+		}
 		if err := rc.EnsureProfile(agent.Name, agent.Role, project); err != nil {
 			errs = append(errs, fmt.Errorf("profile %s: %w", agent.Name, err))
 		}

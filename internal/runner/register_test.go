@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +66,7 @@ func callsFor(calls []rpcCall, tool string) []rpcCall {
 // battle-tested curl argument shape — profile_slug included, or the agent
 // never sees dispatched tasks.
 func TestRegisterFleetRegistersProfilesAndAgents(t *testing.T) {
+	stubExec(t) // every tmux has-session succeeds
 	srv, calls := captureRelay(t)
 	cfg := &config.FleetConfig{
 		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
@@ -107,6 +109,7 @@ func TestRegisterFleetRegistersProfilesAndAgents(t *testing.T) {
 // Vault docs are pushed via set_memory with the same key/scope/tags shape as
 // the curl the script used to emit.
 func TestRegisterFleetPushesVaultDocs(t *testing.T) {
+	stubExec(t)
 	srv, calls := captureRelay(t)
 	dir := t.TempDir()
 	vaultShared := filepath.Join(dir, ".fleet", "vault", "shared")
@@ -143,9 +146,47 @@ func TestRegisterFleetPushesVaultDocs(t *testing.T) {
 	}
 }
 
+// A partially-failed launch must not leave ghosts on the relay: an agent whose
+// tmux session never started is skipped entirely (no profile, no register, no
+// vault) and named honestly in the joined error.
+func TestRegisterFleetSkipsAgentsWithoutSession(t *testing.T) {
+	srv, calls := captureRelay(t)
+	orig := execCommand
+	execCommand = func(name string, arg ...string) *exec.Cmd {
+		// has-session fails only for ghost — its launch never created a pane.
+		if len(arg) > 0 && arg[0] == "has-session" && strings.Contains(strings.Join(arg, " "), "ghost") {
+			return exec.Command("false")
+		}
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
+		Agents: []config.AgentConfig{
+			{Name: "dev", Color: "green", Role: "Dev"},
+			{Name: "ghost", Color: "blue", Role: "Ops"},
+		},
+	}
+
+	err := registerFleet(cfg, relay.NewClient(srv.URL))
+	if err == nil || !strings.Contains(err.Error(), "skip register ghost: no tmux session") {
+		t.Errorf("expected the skipped agent named in the joined error, got: %v", err)
+	}
+	for _, c := range *calls {
+		if c.Args["name"] == "ghost" || c.Args["slug"] == "ghost" {
+			t.Errorf("ghost must not reach the relay; got %s call: %v", c.Tool, c.Args)
+		}
+	}
+	if got := len(callsFor(*calls, "register_agent")); got != 1 {
+		t.Errorf("the live agent must still register, got %d register_agent calls", got)
+	}
+}
+
 // A failed registration must surface with the agent's name — and must not
 // stop the remaining agents from being registered.
 func TestRegisterFleetSurfacesFailureAndContinues(t *testing.T) {
+	stubExec(t)
 	srv, calls := captureRelay(t, "register_agent")
 	cfg := &config.FleetConfig{
 		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},

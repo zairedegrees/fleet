@@ -31,6 +31,7 @@ func (f *fakeRegistrar) PushVaultDoc(project, path string, content []byte) error
 // The configure step must report where it logs and that it actually spawned —
 // instead of fire-and-forgetting with a void signature.
 func TestConfigureAgentsReturnsLogPathAndSpawns(t *testing.T) {
+	stubExec(t) // every tmux has-session succeeds
 	dir := t.TempDir()
 	spawned := ""
 	logPath, err := configureAgents(testCfg(dir), dir, func(p string) error { spawned = p; return nil }, &fakeRegistrar{})
@@ -50,6 +51,7 @@ func TestConfigureAgentsReturnsLogPathAndSpawns(t *testing.T) {
 
 // A spawn failure (e.g. fork error) must surface, not be swallowed.
 func TestConfigureAgentsSurfacesSpawnError(t *testing.T) {
+	stubExec(t)
 	dir := t.TempDir()
 	_, err := configureAgents(testCfg(dir), dir, func(p string) error { return errors.New("fork failed") }, &fakeRegistrar{})
 	if err == nil {
@@ -62,6 +64,7 @@ func TestConfigureAgentsSurfacesSpawnError(t *testing.T) {
 
 // If setup fails (log dir cannot be created) we must error and never spawn.
 func TestConfigureAgentsErrorsBeforeSpawnOnSetupFailure(t *testing.T) {
+	stubExec(t)
 	dir := t.TempDir()
 	// Make "logs" a FILE so MkdirAll(dir/logs) fails.
 	if err := os.WriteFile(filepath.Join(dir, "logs"), []byte("x"), 0644); err != nil {
@@ -81,6 +84,7 @@ func TestConfigureAgentsErrorsBeforeSpawnOnSetupFailure(t *testing.T) {
 // detached pane-configure script must still spawn — rename/color/send-keys
 // are independent of the HTTP registration.
 func TestConfigureAgentsSurfacesRelayErrorButStillSpawns(t *testing.T) {
+	stubExec(t)
 	dir := t.TempDir()
 	spawned := false
 	_, err := configureAgents(testCfg(dir), dir, func(p string) error { spawned = true; return nil }, &fakeRegistrar{err: errors.New("relay down")})
