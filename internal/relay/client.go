@@ -24,12 +24,6 @@ type Agent struct {
 	Color       string `json:"color"`
 }
 
-type Profile struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-	Role string `json:"role"`
-}
-
 type mpcRequest struct {
 	Jsonrpc string          `json:"jsonrpc"`
 	ID      int             `json:"id"`
@@ -117,33 +111,6 @@ func (c *Client) call(toolName string, args map[string]interface{}) (json.RawMes
 	return json.RawMessage(result.Content[0].Text), nil
 }
 
-func (c *Client) ListProjects() ([]string, error) {
-	// The relay has no list_projects endpoint.
-	// We discover projects by listing all agents (no project filter)
-	// and extracting unique project names.
-	data, err := c.call("list_agents", map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Agents []struct {
-			Project string `json:"project"`
-		} `json:"agents"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	seen := make(map[string]bool)
-	var projects []string
-	for _, a := range result.Agents {
-		if a.Project != "" && !seen[a.Project] {
-			seen[a.Project] = true
-			projects = append(projects, a.Project)
-		}
-	}
-	return projects, nil
-}
-
 func (c *Client) ListAgents(project string) ([]Agent, error) {
 	data, err := c.call("list_agents", map[string]interface{}{"project": project})
 	if err != nil {
@@ -156,20 +123,6 @@ func (c *Client) ListAgents(project string) ([]Agent, error) {
 		return nil, err
 	}
 	return result.Agents, nil
-}
-
-func (c *Client) ListProfiles(project string) ([]Profile, error) {
-	data, err := c.call("list_profiles", map[string]interface{}{"project": project})
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Profiles []Profile `json:"profiles"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result.Profiles, nil
 }
 
 func (c *Client) DispatchTask(agent, project, description string) error {

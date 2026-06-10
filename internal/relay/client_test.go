@@ -11,27 +11,6 @@ import (
 	"time"
 )
 
-func TestListProjects(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		agentsJSON := `{"agents":[{"name":"a1","role":"dev","status":"active","project":"proj-a"},{"name":"a2","role":"ops","status":"active","project":"proj-b"}]}`
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`, jsonEscape(agentsJSON))
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	projects, err := client.ListProjects()
-	if err != nil {
-		t.Fatalf("ListProjects failed: %v", err)
-	}
-	if len(projects) != 2 {
-		t.Fatalf("expected 2 projects, got %d: %v", len(projects), projects)
-	}
-	if projects[0] != "proj-a" {
-		t.Errorf("expected proj-a, got %s", projects[0])
-	}
-}
-
 func TestListAgents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentsJSON := `{"agents":[{"name":"ops","role":"monitor","status":"active"},{"name":"quant","role":"analyst","status":"inactive"}],"count":2}`
