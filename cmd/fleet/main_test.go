@@ -114,8 +114,10 @@ func TestFollowPaneErrorsWhenSessionDies(t *testing.T) {
 	}
 }
 
-// Refreshes must reposition the cursor (\033[H) instead of clearing the whole
-// screen (\033[2J), which flickers on every poll.
+// Refreshes must reposition the cursor (\033[H) and erase leftovers (\033[K
+// per line, \033[J below the frame) instead of clearing the whole screen
+// (\033[2J), which flickers on every poll. The full clear happens exactly
+// once, before the first frame.
 func TestFollowPaneRefreshesWithoutFullClear(t *testing.T) {
 	var buf bytes.Buffer
 	calls := 0
@@ -129,14 +131,73 @@ func TestFollowPaneRefreshesWithoutFullClear(t *testing.T) {
 
 	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
 	out := buf.String()
-	if strings.Contains(out, "\033[2J") {
-		t.Errorf("refresh must not clear the full screen, got %q", out)
+	if n := strings.Count(out, "\033[2J"); n != 1 {
+		t.Errorf("full clear must happen exactly once, before the first frame, got %d in %q", n, out)
 	}
-	if !strings.Contains(out, "\033[H") {
-		t.Errorf("refresh must home the cursor, got %q", out)
+	home := strings.LastIndex(out, "\033[H")
+	if home < 0 {
+		t.Fatalf("refresh must home the cursor, got %q", out)
 	}
-	if !strings.Contains(out, "Ctrl-C") || !strings.Contains(out, "new output") {
-		t.Errorf("refresh must redraw the header and the new content, got %q", out)
+	refresh := out[home:]
+	if strings.Contains(refresh, "\033[2J") {
+		t.Errorf("refresh must not clear the full screen, got %q", refresh)
+	}
+	if !strings.Contains(refresh, "\033[K") {
+		t.Errorf("refresh must erase each redrawn line's tail, got %q", refresh)
+	}
+	if !strings.HasSuffix(refresh, "\033[J") {
+		t.Errorf("refresh must erase below the frame, got %q", refresh)
+	}
+	if !strings.Contains(refresh, "Ctrl-C") || !strings.Contains(refresh, "new output") {
+		t.Errorf("refresh must redraw the header and the new content, got %q", refresh)
+	}
+}
+
+// The initial followed frame must start from a cleared screen at the top-left
+// so it shares the same origin as every \033[H refresh — otherwise the first
+// refresh interleaves with the shell scrollback above the initial frame.
+func TestFollowPaneClearsOnceBeforeInitialFrame(t *testing.T) {
+	var buf bytes.Buffer
+	capture := func() (string, error) {
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "initial frame", 50, time.Millisecond)
+	out := buf.String()
+	if !strings.HasPrefix(out, "\033[2J\033[H") {
+		t.Errorf("followed output must start with a one-time clear+home, got %q", out)
+	}
+	if !strings.Contains(out, "initial frame") {
+		t.Errorf("followPane must draw the initial frame itself, got %q", out)
+	}
+}
+
+// A redraw shorter than the previous frame must be followed by an erase —
+// \033[H alone leaves the previous frame's tail on screen (e.g. a spinner
+// line redrawn as a bare prompt keeps "… 42s · 1234 tokens" visible).
+func TestFollowPaneErasesStaleCharsOnShorterFrame(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	capture := func() (string, error) {
+		calls++
+		switch calls {
+		case 1:
+			return "Thinking… 42s · 1234 tokens", nil
+		case 2:
+			return "❯", nil
+		}
+		return "", errors.New("no such session")
+	}
+
+	followPane(&buf, capture, "dev", logsHeader("proj", "dev"), "old", 50, time.Millisecond)
+	out := buf.String()
+	idx := strings.LastIndex(out, "❯")
+	if idx < 0 {
+		t.Fatalf("expected the shorter frame to be drawn, got %q", out)
+	}
+	tail := out[idx+len("❯"):]
+	if !strings.Contains(tail, "\033[J") && !strings.Contains(tail, "\033[K") {
+		t.Errorf("shorter redraw must end with an erase sequence, got tail %q in %q", tail, out)
 	}
 }
 
