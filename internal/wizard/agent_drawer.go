@@ -46,7 +46,10 @@ type agentDrawer struct {
 	executiveIdx int      // index into executiveOpts
 
 	// base is the agent being edited (zero for create): save() starts from it
-	// so fields the drawer doesn't manage survive an edit instead of being dropped.
+	// so any future AgentConfig field the drawer doesn't manage survives an
+	// edit instead of being dropped. Today every field IS drawer-managed, so
+	// this capture is unobservable behavior — an equivalent mutant that no
+	// test can pin until config grows an unmanaged field.
 	base config.AgentConfig
 
 	field     drawerField

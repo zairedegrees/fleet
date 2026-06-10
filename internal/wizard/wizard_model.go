@@ -231,7 +231,16 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if !isTextInput {
 			switch keyMsg.String() {
-			case "q", "esc":
+			case "q":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				// On the presets focus, esc steps back to the relay URL
+				// field (delegated below) — the only way to edit a loaded
+				// project's saved relay_url. Everywhere else it quits.
+				if m.activePanel == panelLeft && m.project.focus == focusPresets {
+					break
+				}
 				m.quitting = true
 				return m, tea.Quit
 			case "tab":
@@ -321,7 +330,7 @@ func (m wizardModel) View() string {
 	} else if m.activePanel == panelLeft && m.project.focus == focusRelayURL {
 		help = "type relay URL  enter=confirm  esc=back  ctrl+c=quit"
 	} else if m.activePanel == panelLeft {
-		help = "j/k=move  enter=select preset  tab=agents panel  q=quit"
+		help = "j/k=move  enter=select preset  esc=relay URL  tab=agents panel  q=quit"
 	} else {
 		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  enter=launch  s=save+launch  tab=presets  q=quit"
 	}

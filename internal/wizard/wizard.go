@@ -16,6 +16,7 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 )
 
 // WizardResult is the outcome of the interactive wizard.

@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -69,6 +70,53 @@ func TestProjectPanelRelayURLEmptyFallsBackToDefault(t *testing.T) {
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
 	if got := p.RelayURL(); got != config.DefaultRelayURL {
 		t.Errorf("empty relay URL must fall back to default, got %q", got)
+	}
+}
+
+// A malformed relay URL must be rejected on submit — error visible in the
+// panel, step unchanged — instead of aborting the launch after the wizard has
+// exited, when the whole typed config is already lost.
+func TestProjectPanelRelayURLInvalidRejectedOnSubmit(t *testing.T) {
+	invalid := []string{
+		"localhost:8090/mcp", // url.Parse reads "localhost" as the scheme
+		"htp://localhost:8090/mcp",
+		"http://",
+		"not a url",
+	}
+	for _, raw := range invalid {
+		p := newProjectPanel()
+		p.focus = focusRelayURL
+		p.relayInput.SetValue(raw)
+		p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
+		if p.focus != focusRelayURL {
+			t.Errorf("%q: submit must stay on the relay URL step, got focus %v", raw, p.focus)
+		}
+		if p.ready {
+			t.Errorf("%q: panel must not become ready with an invalid relay URL", raw)
+		}
+		if !strings.Contains(p.View(true), "relay URL") {
+			t.Errorf("%q: the panel must show the validation error, got:\n%s", raw, p.View(true))
+		}
+	}
+}
+
+// After a rejected submit, correcting the URL must clear the error and proceed.
+func TestProjectPanelRelayURLValidAfterInvalidProceeds(t *testing.T) {
+	p := newProjectPanel()
+	p.focus = focusRelayURL
+	p.relayInput.SetValue("htp://oops")
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusRelayURL || p.ready {
+		t.Fatalf("invalid URL must keep the step, got focus=%v ready=%v", p.focus, p.ready)
+	}
+
+	p.relayInput.SetValue("http://localhost:9999/mcp")
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusPresets || !p.ready {
+		t.Fatalf("corrected URL must confirm and move to presets, got focus=%v ready=%v", p.focus, p.ready)
+	}
+	if strings.Contains(p.View(true), "must start with") {
+		t.Error("a successful submit must clear the validation error")
 	}
 }
 

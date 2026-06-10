@@ -25,7 +25,7 @@ fleet treats tokens as the scarce resource:
 
 ## Features
 
-- **Interactive wizard** (Bubble Tea TUI): name a project, point at a path, pick a team, launch.
+- **Interactive wizard** (Bubble Tea TUI): pick a project, point at a path, confirm the relay URL (validated on the spot, defaults to the local relay), pick a team, launch.
 - **Stack scanner**: detects the project's tech stack and suggests matching agent roles.
 - **7 team presets**: Web App, API / Backend, Data / ML, Trading Bot, Full Stack, Minimal, Custom. Each is a ready-made set of agents with roles and a reporting structure.
 - **tmux session per agent**, opened together in an **iTerm2 grid** (falls back to `tmux attach`).
@@ -66,9 +66,11 @@ Run `fleet --doctor` to verify and get install hints.
 fleet                         # interactive wizard
 fleet --last                  # relaunch the last saved fleet
 fleet --status                # sessions + relay state and task counts per agent
+fleet usage                   # per-project usage: agents, polling, tasks, vault
 fleet --kill                  # stop the last project's fleet
-fleet --kill-all              # stop every fleet across all projects
+fleet --kill-all              # stop every fleet across all projects (asks y/N)
 fleet --doctor                # check prerequisites
+fleet --relay-url <url>       # override the relay URL for any command
 
 fleet dispatch <task> --to <agent>     # dispatch a task and wake the agent
 fleet logs <agent> [-n 50] [-f]        # stream an agent's terminal
@@ -76,12 +78,14 @@ fleet add --name qa --role "Testing" --reports-to dev
 fleet stop <agent>                     # graceful /exit, then kill if needed
 ```
 
+`fleet --kill-all` stops every project's sessions, so it asks for a `y/N` confirmation first; pass `--force` to skip the prompt in scripts. `--relay-url` works on every command and beats the project's saved `relay_url`, which beats the built-in default (`http://localhost:8090/mcp`).
+
 `fleet --status` uses the relay as the source of truth: each tmux session shows its relay registration and workload (`[relay: active · 2 task(s)]`), sessions the relay does not know show `[relay: unregistered]`, and relay-registered agents without a session appear as ghosts (`no tmux session`). If the relay is down, status degrades to a `⚠ relay unavailable` warning followed by the tmux sessions only.
 
 ## Architecture
 
 ```
-cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, lifecycle flags
+cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, lifecycle flags
 internal/wizard      Bubble Tea TUI: project panel, agent panel, presets, drawer
 internal/scanner     tech-stack detection, agent suggestions
 internal/runner      tmux session management, iTerm2 grid, async agent configuration
