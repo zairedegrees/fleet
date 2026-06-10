@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,7 @@ type ProjectSelectedMsg struct {
 
 const (
 	focusProjectList leftFocus = 3
+	focusRelayURL    leftFocus = 4
 )
 
 type projectPanel struct {
@@ -48,6 +50,10 @@ type projectPanel struct {
 	// Path input (for new projects)
 	pathInput textinput.Model
 	projName  string // auto-derived from path basename
+
+	// Relay URL input, prefilled with the default relay
+	relayInput textinput.Model
+	relayErr   string // validation error for the relay URL step
 
 	// Presets
 	presets      []Preset
@@ -70,10 +76,17 @@ func newProjectPanel() projectPanel {
 	pi.Width = 30
 	pi.ShowSuggestions = true
 
+	ri := textinput.New()
+	ri.Placeholder = config.DefaultRelayURL
+	ri.CharLimit = 200
+	ri.Width = 30
+	ri.SetValue(config.DefaultRelayURL)
+
 	existing := discoverProjects()
 
 	return projectPanel{
 		pathInput:        pi,
+		relayInput:       ri,
 		presets:          AllPresets(),
 		existingProjects: existing,
 		focus:            focusProjectList,
@@ -194,6 +207,8 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 			return p.updateProjectList(msg)
 		case focusPath:
 			return p.updatePathInput(msg)
+		case focusRelayURL:
+			return p.updateRelayInput(msg)
 		case focusPresets:
 			return p.updatePresetList(msg)
 		}
@@ -202,6 +217,8 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 	var cmd tea.Cmd
 	if p.focus == focusPath {
 		p.pathInput, cmd = p.pathInput.Update(msg)
+	} else if p.focus == focusRelayURL {
+		p.relayInput, cmd = p.relayInput.Update(msg)
 	}
 	return p, cmd
 }
@@ -271,10 +288,10 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 		// Create directory if it doesn't exist
 		os.MkdirAll(expanded, 0755)
 
-		p.focus = focusPresets
+		p.focus = focusRelayURL
 		p.pathInput.Blur()
-		p.ready = true
-		return p, nil
+		p.relayInput.Focus()
+		return p, textinput.Blink
 	}
 
 	var cmd tea.Cmd
@@ -283,8 +300,56 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	return p, cmd
 }
 
+func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		p.focus = focusPath
+		p.relayErr = ""
+		p.relayInput.Blur()
+		p.pathInput.Focus()
+		return p, textinput.Blink
+	case "enter":
+		// Validate here, on submit: a typo'd URL would otherwise only fail
+		// at launch time, after the wizard has exited and the config is gone.
+		// Empty still means "use the default" (see RelayURL).
+		if val := strings.TrimSpace(p.relayInput.Value()); val != "" {
+			if err := validateRelayURL(val); err != nil {
+				p.relayErr = err.Error()
+				return p, nil
+			}
+		}
+		p.relayErr = ""
+		p.focus = focusPresets
+		p.relayInput.Blur()
+		p.ready = true
+		return p, nil
+	}
+
+	var cmd tea.Cmd
+	p.relayInput, cmd = p.relayInput.Update(msg)
+	return p, cmd
+}
+
+func validateRelayURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid relay URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("relay URL must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("relay URL needs a host, e.g. %s", config.DefaultRelayURL)
+	}
+	return nil
+}
+
 func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
+	case "esc":
+		p.focus = focusRelayURL
+		p.relayInput.Focus()
+		return p, textinput.Blink
 	case "up", "k":
 		if p.presetCursor > 0 {
 			p.presetCursor--
@@ -359,10 +424,18 @@ func (p projectPanel) View(active bool) string {
 			name := filepath.Base(expandHome(val))
 			sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(name) + dimStyle.Render(" (auto)") + "\n")
 		}
+	} else if p.focus == focusRelayURL {
+		// Relay URL input mode — path is confirmed
+		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
+		sb.WriteString("  Relay: " + p.relayInput.View() + "\n")
+		if p.relayErr != "" {
+			sb.WriteString("  " + errorStyle.Render("⚠ "+p.relayErr) + "\n")
+		}
 	} else {
-		// Confirmed — show name + path
+		// Confirmed — show name + path + relay
 		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
+		sb.WriteString("  " + dimStyle.Render("Relay: ") + selectedStyle.Render(p.RelayURL()) + "\n")
 	}
 
 	sb.WriteString("\n")
@@ -410,6 +483,15 @@ func (p projectPanel) ProjectName() string {
 
 func (p projectPanel) ProjectPath() string {
 	return expandHome(strings.TrimSpace(p.pathInput.Value()))
+}
+
+// RelayURL returns the relay URL to persist in the config; an emptied field
+// falls back to the default so the saved config stays launchable.
+func (p projectPanel) RelayURL() string {
+	if val := strings.TrimSpace(p.relayInput.Value()); val != "" {
+		return val
+	}
+	return config.DefaultRelayURL
 }
 
 func (p projectPanel) IsReady() bool {

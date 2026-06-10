@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -16,19 +17,51 @@ import (
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
-const defaultRelayURL = "http://localhost:8090/mcp"
+const defaultRelayURL = config.DefaultRelayURL
 
 // loadLastConfig is a seam over config.LoadLast so command behavior around a
 // missing/corrupt last config can be unit-tested.
 var loadLastConfig = config.LoadLast
 
+// Seams over the tmux layer so the kill-all confirmation flow is unit-testable
+// without killing real sessions.
 var (
-	flagLast    bool
-	flagKill    bool
-	flagKillAll bool
-	flagStatus  bool
-	flagDoctor  bool
+	listFleetSessions    = runner.ListFleetSessions
+	killAllFleetSessions = runner.KillAllFleetSessions
 )
+
+// Seams over the launch side effects (config persistence, tmux sessions,
+// iTerm2, background configuration) so the launch pipeline is unit-testable
+// without real sessions.
+var (
+	saveConfigAsLast     = config.SaveAsLast
+	createSessions       = runner.CreateSessions
+	openITerm2Grid       = runner.OpenITerm2Grid
+	configureAgentsAsync = runner.ConfigureAgentsAsync
+)
+
+var (
+	flagLast     bool
+	flagKill     bool
+	flagKillAll  bool
+	flagStatus   bool
+	flagDoctor   bool
+	flagForce    bool
+	flagRelayURL string
+)
+
+// resolveRelayURL is the single priority chain for relay URL resolution:
+// --relay-url flag > config URL > built-in default. The flag value is
+// trimmed; whitespace-only means unset and must not win the chain.
+func resolveRelayURL(flagURL, configURL string) string {
+	if u := strings.TrimSpace(flagURL); u != "" {
+		return u
+	}
+	if configURL != "" {
+		return configURL
+	}
+	return defaultRelayURL
+}
 
 func main() {
 	root := &cobra.Command{
@@ -42,6 +75,8 @@ func main() {
 	root.Flags().BoolVar(&flagKillAll, "kill-all", false, "Stop ALL fleet sessions across all projects")
 	root.Flags().BoolVar(&flagStatus, "status", false, "List active fleet sessions")
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
+	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
+	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")
 
 	dispatchCmd := &cobra.Command{
 		Use:   "dispatch [description]",
@@ -76,6 +111,13 @@ func main() {
 	addCmd.MarkFlagRequired("role")
 	root.AddCommand(addCmd)
 
+	usageCmd := &cobra.Command{
+		Use:   "usage",
+		Short: "Show per-project fleet usage (agents, polling, tasks, vault)",
+		RunE:  runUsage,
+	}
+	root.AddCommand(usageCmd)
+
 	stopCmd := &cobra.Command{
 		Use:   "stop <agent>",
 		Short: "Stop a running agent",
@@ -107,7 +149,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run(defaultRelayURL)
+	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""))
 	doctor.Print(checks)
 	return nil
 }
@@ -142,17 +184,38 @@ func runKill() error {
 }
 
 func runKillAll() error {
-	sessions, err := runner.ListFleetSessions()
+	return killAll(os.Stdin, os.Stdout, os.Stderr, flagForce)
+}
+
+// killAll stops every fleet session of every project. The blast radius is
+// total, so without --force it requires an explicit y/N confirmation; EOF or
+// anything but y/yes aborts. An abort is loud — stderr line + non-zero exit —
+// so a non-interactive caller can't mistake "did nothing" for "killed all".
+func killAll(in io.Reader, out, errOut io.Writer, force bool) error {
+	sessions, err := listFleetSessions()
 	if err != nil {
 		return fmt.Errorf("cannot list tmux sessions: %w", err)
 	}
 	if len(sessions) == 0 {
-		fmt.Println("  No fleet sessions running.")
+		fmt.Fprintln(out, "  No fleet sessions running.")
 		return nil
 	}
-	runner.KillAllFleetSessions()
-	fmt.Printf("  Killed %d fleet session(s) across all projects.\n", len(sessions))
+	if !force {
+		fmt.Fprintf(out, "  Kill %d fleet session(s) across ALL projects? [y/N] ", len(sessions))
+		if !confirmYes(in) {
+			fmt.Fprintf(errOut, "  Aborted — no session killed. Use --force to skip this prompt (non-interactive use).\n")
+			return fmt.Errorf("kill-all aborted: confirmation not received")
+		}
+	}
+	killAllFleetSessions()
+	fmt.Fprintf(out, "  Killed %d fleet session(s) across all projects.\n", len(sessions))
 	return nil
+}
+
+func confirmYes(in io.Reader) bool {
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 func runDispatch(cmd *cobra.Command, args []string) error {
@@ -164,12 +227,7 @@ func runDispatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no fleet config found. Run 'fleet' first")
 	}
 
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-
-	client := relay.NewClient(relayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL))
 	if err := client.DispatchTask(agent, cfg.Project.Name, description); err != nil {
 		return fmt.Errorf("dispatch failed: %w", err)
 	}
@@ -307,11 +365,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	// Register on the relay (profile + profile_slug) so the agent can actually
 	// receive dispatched tasks — without this it's a ghost in the grid.
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-	client := relay.NewClient(relayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL))
 	if err := client.EnsureProfile(name, role, project); err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ profile registration failed: %v\n", err)
 	}
@@ -344,11 +398,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Deregister from the relay so the agent doesn't linger as a ghost.
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-	if err := relay.NewClient(relayURL).DeactivateAgent(agent, project); err != nil {
+	if err := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)).DeactivateAgent(agent, project); err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Agent stopped but relay deregistration failed: %v\n", err)
 	}
 
@@ -371,14 +421,10 @@ func runStop(cmd *cobra.Command, args []string) error {
 }
 
 func runLast() error {
-	cfg, err := config.LoadLast()
+	cfg, err := loadLastConfig()
 	if err != nil {
 		fmt.Println("  No saved config found. Run 'fleet' to create one.")
 		return runWizard()
-	}
-
-	if cfg.Project.RelayURL == "" {
-		cfg.Project.RelayURL = defaultRelayURL
 	}
 
 	var agentNames []string
@@ -402,7 +448,7 @@ func runLast() error {
 }
 
 func runWizard() error {
-	client := relay.NewClient(defaultRelayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, ""))
 
 	result, err := wizard.Run(client)
 	if err != nil {
@@ -410,10 +456,6 @@ func runWizard() error {
 			return nil
 		}
 		return err
-	}
-
-	if result.Config.Project.RelayURL == "" {
-		result.Config.Project.RelayURL = defaultRelayURL
 	}
 
 	return launch(result.Config, result.Save)
@@ -441,6 +483,14 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
+	// An empty config relay_url is filled with the default and persisted; the
+	// --relay-url flag is a per-invocation override that drives every relay
+	// call of this launch but must never be written to the saved config.
+	if cfg.Project.RelayURL == "" {
+		cfg.Project.RelayURL = defaultRelayURL
+	}
+	relayURL := resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)
+
 	claudeBin, err := cfg.Claude.ResolveBin()
 	if err != nil {
 		fmt.Printf("  ✗ %v\n", err)
@@ -448,22 +498,22 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return err
 	}
 
-	relayClient := relay.NewClient(cfg.Project.RelayURL)
+	relayClient := relay.NewClient(relayURL)
 	if err := relayClient.Health(); err != nil {
-		fmt.Printf("  ✗ Relay unreachable at %s\n", cfg.Project.RelayURL)
+		fmt.Printf("  ✗ Relay unreachable at %s\n", relayURL)
 		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
 		return fmt.Errorf("relay health check failed: %w", err)
 	}
 
 	// Preflight: fail early on a broken/absent tmux rather than per-agent later.
-	if _, err := runner.ListFleetSessions(); err != nil {
+	if _, err := listFleetSessions(); err != nil {
 		fmt.Printf("  ✗ %v\n", err)
 		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
 		return err
 	}
 
 	// Always save config
-	if err := config.SaveAsLast(cfg); err != nil {
+	if err := saveConfigAsLast(cfg); err != nil {
 		fmt.Printf("  ⚠ Failed to save config: %v\n", err)
 	} else if save {
 		fmt.Println("  Config saved to ~/.fleet/configs/" + cfg.Project.Name + ".toml")
@@ -472,7 +522,7 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	fmt.Print("\n  🚀 Launching fleet...\n\n")
 
 	// Phase 1: Create tmux sessions + launch claude (fast)
-	results := runner.CreateSessions(cfg, claudeBin)
+	results := createSessions(cfg, claudeBin)
 
 	launchErr := reportLaunchResults(os.Stderr, results)
 
@@ -488,11 +538,17 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	for _, a := range cfg.Agents {
 		agentNames = append(agentNames, a.Name)
 	}
-	runner.OpenITerm2Grid(cfg.Project.Name, agentNames)
+	openITerm2Grid(cfg.Project.Name, agentNames)
 
 	// Phase 3: Configure agents in background via a shell script
-	// (fleet exits, script waits for prompts and sends init commands)
-	logPath, cfgErr := runner.ConfigureAgentsAsync(cfg)
+	// (fleet exits, script waits for prompts and sends init commands).
+	// ConfigureAgentsAsync reads the relay URL from cfg, so hand it the
+	// runtime URL on the in-memory value only and restore it — the file saved
+	// above keeps the config's own relay_url.
+	persistedURL := cfg.Project.RelayURL
+	cfg.Project.RelayURL = relayURL
+	logPath, cfgErr := configureAgentsAsync(cfg)
+	cfg.Project.RelayURL = persistedURL
 	if cfgErr != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Agent configuration failed to start: %v\n", cfgErr)
 		if launchErr == nil {

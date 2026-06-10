@@ -1,15 +1,16 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 type LaunchResult struct {
@@ -73,31 +74,54 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 	return results
 }
 
-// ConfigureAgentsAsync generates a shell script that configures agents after
-// Claude boots, then launches it as a detached process that survives fleet exit.
+// ConfigureAgentsAsync registers the fleet on the relay synchronously (the
+// HTTP calls don't depend on pane readiness), then generates a shell script
+// for the pane-dependent configuration (prompt wait + send-keys) and launches
+// it as a detached process that survives fleet exit.
 // Logs output to ~/.fleet/logs/configure-{timestamp}.log
 func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
 	// wake.sh is independent of the configure run; generate it up front.
 	generateWakeScript(cfg)
-	return configureAgents(cfg, config.FleetDir(), spawnDetached)
+	return configureAgents(cfg, config.FleetDir(), spawnDetached, newRegistrar(resolveRelayURL(cfg)))
+}
+
+// resolveRelayURL returns the project's relay URL, falling back to the default
+// when the config field is empty.
+func resolveRelayURL(cfg *config.FleetConfig) string {
+	if cfg.Project.RelayURL != "" {
+		return cfg.Project.RelayURL
+	}
+	return config.DefaultRelayURL
+}
+
+// newRegistrar is the registrar-construction seam — tests swap it to observe
+// which relay URL the launch registration targets without a live relay.
+// Registration runs synchronously before fleet exits: the timeout stays short
+// so a hanging relay can't block the launch for 10s per call.
+var newRegistrar = func(relayURL string) relayRegistrar {
+	return relay.NewClientWithTimeout(relayURL, registerTimeout)
 }
 
 // spawnDetached starts the configure script as a detached process that survives
 // fleet exit.
 func spawnDetached(scriptPath string) error {
-	cmd := exec.Command("bash", scriptPath)
+	cmd := execCommand("bash", scriptPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd.Start()
 }
 
-// configureAgents writes the configure script under fleetDir and runs it via
-// spawn, returning the log path plus any setup/spawn error. Taking fleetDir and
-// spawn as parameters makes the error paths unit-testable without touching
-// ~/.fleet or actually running bash.
-func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string) error) (string, error) {
+// configureAgents registers the fleet on the relay, then writes the configure
+// script under fleetDir and runs it via spawn, returning the log path plus any
+// registration/setup/spawn error (joined — a registration failure must surface
+// but never blocks the pane-dependent script). Taking fleetDir, spawn and rc as
+// parameters makes the error paths unit-testable without touching ~/.fleet,
+// running bash, or needing a relay.
+func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string) error, rc relayRegistrar) (string, error) {
+	relayErr := registerFleet(cfg, rc)
+
 	logDir := filepath.Join(fleetDir, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return "", fmt.Errorf("create log dir: %w", err)
+		return "", errors.Join(relayErr, fmt.Errorf("create log dir: %w", err))
 	}
 	rotateConfigLogs(logDir, 5)
 
@@ -105,29 +129,28 @@ func configureAgents(cfg *config.FleetConfig, fleetDir string, spawn func(string
 	logPath := filepath.Join(logDir, fmt.Sprintf("configure-%s.log", timestamp))
 	scriptPath := filepath.Join(fleetDir, "configure-agents.sh")
 
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = "http://localhost:8090/mcp"
-	}
-
-	if err := os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, relayURL, logPath)), 0755); err != nil {
-		return logPath, fmt.Errorf("write configure script: %w", err)
+	if err := os.WriteFile(scriptPath, []byte(buildConfigureScript(cfg, logPath)), 0755); err != nil {
+		return logPath, errors.Join(relayErr, fmt.Errorf("write configure script: %w", err))
 	}
 
 	if err := spawn(scriptPath); err != nil {
-		return logPath, fmt.Errorf("start configure script: %w", err)
+		return logPath, errors.Join(relayErr, fmt.Errorf("start configure script: %w", err))
 	}
-	return logPath, nil
+	return logPath, relayErr
 }
 
-// buildConfigureScript returns the bash script that configures each agent after
-// Claude boots: rename/color, relay register + profile_slug, vault injection, and
-// — only for agents with AutoTalk=true — the continuous `/relay talk` poll loop.
-// Kept pure (reads only vault docs) so the talk-gating logic is unit-testable.
-func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) string {
+// buildConfigureScript returns the bash script for the pane-dependent agent
+// configuration after Claude boots: rename/color, the in-pane /relay register
+// skill command, the register_agent re-assert curl, and — only for agents with
+// AutoTalk=true — the continuous `/relay talk` poll loop. Profile + vault HTTP
+// lives in registerFleet via the typed client; the script must stay detached
+// because it waits up to ~90s per pane and must survive fleet's exit.
+// Kept pure so the talk-gating logic is unit-testable.
+func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 	var script strings.Builder
 	script.WriteString("#!/bin/bash\n")
 	script.WriteString(fmt.Sprintf("exec > %s 2>&1\n", logPath))
+	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", resolveRelayURL(cfg)))
 	script.WriteString("wait_prompt() {\n")
 	script.WriteString("  local session=$1 timeout=$2 elapsed=0\n")
 	script.WriteString("  while [ $elapsed -lt $timeout ]; do\n")
@@ -139,25 +162,6 @@ func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) str
 	script.WriteString("  done\n")
 	script.WriteString("  return 1\n")
 	script.WriteString("}\n\n")
-
-	// Ensure profiles via relay
-	script.WriteString(fmt.Sprintf("RELAY_URL=\"%s\"\n", relayURL))
-	script.WriteString(`ensure_profile() {
-  local slug="$1" name="$2" role="$3" project="$4"
-  curl -s -X POST "$RELAY_URL" \
-    -H "Content-Type: application/json" \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_profile\",\"arguments\":{\"slug\":\"$slug\",\"name\":\"$name\",\"role\":\"$role\",\"project\":\"$project\"}}}" \
-    > /dev/null 2>&1
-}
-`)
-
-	for _, agent := range cfg.Agents {
-		escapedName := strings.ReplaceAll(agent.Name, "'", "'\\''")
-		escapedRole := strings.ReplaceAll(agent.Role, "\"", "\\\"")
-		script.WriteString(fmt.Sprintf("ensure_profile '%s' '%s' '%s' '%s'\n",
-			escapedName, escapedName, escapedRole, cfg.Project.Name))
-	}
-	script.WriteString("\n")
 
 	// Configure each agent
 	project := cfg.Project.Name
@@ -184,27 +188,15 @@ func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) str
 		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
 		script.WriteString("  sleep 3\n")
 
-		// Set profile_slug via direct relay call — without this, agents can't see dispatched tasks
-		script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_agent\",\"arguments\":{\"name\":\"%s\",\"project\":\"%s\",\"role\":\"%s\",\"profile_slug\":\"%s\"}}}' > /dev/null 2>&1\n",
-			agent.Name, cfg.Project.Name, strings.ReplaceAll(agent.Role, "\"", "\\\""), agent.Name))
+		// The in-pane /relay register above makes the agent's LLM call
+		// register_agent WITHOUT profile_slug/reports_to/is_executive, and the
+		// relay's re-register is a full-replace UPDATE that NULLs them — making
+		// dispatched tasks invisible to the agent. Re-assert the complete
+		// registration here so this curl is the LAST write (the battle-tested
+		// order from main). Do not remove it for protocol purity.
+		script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"register_agent\",\"arguments\":{\"name\":\"%s\",\"project\":\"%s\",\"role\":\"%s\",\"profile_slug\":\"%s\",\"reports_to\":\"%s\",\"is_executive\":%t}}}' > /dev/null 2>&1\n",
+			agent.Name, cfg.Project.Name, strings.ReplaceAll(agent.Role, "\"", "\\\""), agent.Name, agent.ReportsTo, agent.IsExecutive))
 		script.WriteString("  sleep 1\n")
-
-		// Vault injection via relay
-		vaultDir := filepath.Join(cfg.Project.Cwd, ".fleet", "vault")
-		docs, err := config.ResolveVaultDocs(vaultDir, agent)
-		if err == nil && len(docs) > 0 {
-			totalSize := config.VaultSize(docs)
-			if totalSize > int64(config.VaultSizeWarningBytes) {
-				script.WriteString(fmt.Sprintf("  echo 'WARNING: vault for %s is %dKB (>50KB)'\n", agent.Name, totalSize/1024))
-			}
-			for _, doc := range docs {
-				escapedContent := strings.ReplaceAll(string(doc.Content), "'", "'\\''")
-				escapedContent = strings.ReplaceAll(escapedContent, "\n", "\\n")
-				script.WriteString(fmt.Sprintf("  curl -s -X POST \"$RELAY_URL\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"set_memory\",\"arguments\":{\"key\":\"vault:%s\",\"value\":\"%s\",\"scope\":\"project\",\"project\":\"%s\",\"tags\":[\"vault\",\"auto-injected\"]}}}' > /dev/null 2>&1\n",
-					doc.Path, strings.ReplaceAll(escapedContent, "\"", "\\\""), cfg.Project.Name))
-			}
-			script.WriteString(fmt.Sprintf("  echo 'vault injected for %s: %d docs'\n", agent.Name, len(docs)))
-		}
 
 		if agent.AutoTalk {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))

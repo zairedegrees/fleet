@@ -65,6 +65,9 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cfg := msg.Config
 		m.project.projName = cfg.Project.Name
 		m.project.pathInput.SetValue(cfg.Project.Cwd)
+		if cfg.Project.RelayURL != "" {
+			m.project.relayInput.SetValue(cfg.Project.RelayURL)
+		}
 		m.project.ready = true
 		m.project.focus = focusPresets
 		// Load agents from saved config
@@ -224,11 +227,20 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// When in text input mode, delegate everything to the active component
-		isTextInput := (m.activePanel == panelLeft && m.project.focus == focusPath) || m.drawerOpen
+		isTextInput := (m.activePanel == panelLeft && (m.project.focus == focusPath || m.project.focus == focusRelayURL)) || m.drawerOpen
 
 		if !isTextInput {
 			switch keyMsg.String() {
-			case "q", "esc":
+			case "q":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				// On the presets focus, esc steps back to the relay URL
+				// field (delegated below) — the only way to edit a loaded
+				// project's saved relay_url. Everywhere else it quits.
+				if m.activePanel == panelLeft && m.project.focus == focusPresets {
+					break
+				}
 				m.quitting = true
 				return m, tea.Quit
 			case "tab":
@@ -315,8 +327,10 @@ func (m wizardModel) View() string {
 		help = "j/k=move  enter=select  q=quit"
 	} else if m.activePanel == panelLeft && m.project.focus == focusPath {
 		help = "type path  tab=autocomplete  enter=confirm  esc=back  ctrl+c=quit"
+	} else if m.activePanel == panelLeft && m.project.focus == focusRelayURL {
+		help = "type relay URL  enter=confirm  esc=back  ctrl+c=quit"
 	} else if m.activePanel == panelLeft {
-		help = "j/k=move  enter=select preset  tab=agents panel  q=quit"
+		help = "j/k=move  enter=select preset  esc=relay URL  tab=agents panel  q=quit"
 	} else {
 		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  enter=launch  s=save+launch  tab=presets  q=quit"
 	}
@@ -339,8 +353,9 @@ func (m wizardModel) Result() *WizardResult {
 
 	cfg := &config.FleetConfig{
 		Project: config.ProjectConfig{
-			Name: m.project.ProjectName(),
-			Cwd:  m.project.ProjectPath(),
+			Name:     m.project.ProjectName(),
+			RelayURL: m.project.RelayURL(),
+			Cwd:      m.project.ProjectPath(),
 		},
 		Agents: agents,
 	}

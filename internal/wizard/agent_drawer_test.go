@@ -33,7 +33,7 @@ func TestDrawerEditPreservesAutoTalk(t *testing.T) {
 	}, []string{"dev"})
 
 	enter := tea.KeyMsg{Type: tea.KeyEnter}
-	_, saved := driveDrawer(t, d, enter, enter, enter, enter, enter)
+	_, saved := driveDrawer(t, d, enter, enter, enter, enter, enter, enter)
 	if saved == nil {
 		t.Fatal("expected a DrawerSaveMsg after entering through all fields")
 	}
@@ -56,6 +56,7 @@ func TestDrawerToggleAutoTalk(t *testing.T) {
 		tab,                            // color -> reports-to
 		tab,                            // reports-to -> auto-talk
 		tea.KeyMsg{Type: tea.KeyRight}, // off -> on
+		tea.KeyMsg{Type: tea.KeyEnter}, // auto-talk -> executive
 		tea.KeyMsg{Type: tea.KeyEnter}, // save
 	}
 	_, saved := driveDrawer(t, d, msgs...)
@@ -67,6 +68,83 @@ func TestDrawerToggleAutoTalk(t *testing.T) {
 	}
 }
 
+// Pins OpenEdit prefilling the executive toggle from the agent being edited:
+// changing an executive's role must not silently drop IsExecutive. Note this
+// does NOT pin the save() base-capture — every AgentConfig field is explicitly
+// drawer-managed today, so dropping the base is an equivalent mutant no test
+// can kill (see the base field comment in agent_drawer.go).
+func TestDrawerEditPreservesIsExecutive(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenEdit(0, config.AgentConfig{
+		Name: "boss", Color: "green", Role: "Lead", IsExecutive: true,
+	}, []string{"boss"})
+
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	msgs := []tea.Msg{
+		enter, // name -> role
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" v2")}, // edit the role
+		enter, enter, enter, enter, enter, // through remaining fields -> save
+	}
+	_, saved := driveDrawer(t, d, msgs...)
+	if saved == nil {
+		t.Fatal("expected a DrawerSaveMsg after entering through all fields")
+	}
+	if saved.Agent.Role != "Lead v2" {
+		t.Errorf("role edit must be saved, got %q", saved.Agent.Role)
+	}
+	if !saved.Agent.IsExecutive {
+		t.Error("editing an executive agent must preserve IsExecutive=true, got false")
+	}
+}
+
+// A new agent defaults to IsExecutive=false; toggling the executive field in
+// the drawer must flip it to true in the saved agent — without touching AutoTalk.
+func TestDrawerToggleExecutive(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenCreate(nil, 0)
+
+	tab := tea.KeyMsg{Type: tea.KeyTab}
+	msgs := []tea.Msg{
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("boss")},
+		tab,                            // name -> role
+		tab,                            // role -> color
+		tab,                            // color -> reports-to
+		tab,                            // reports-to -> auto-talk
+		tab,                            // auto-talk -> executive
+		tea.KeyMsg{Type: tea.KeyRight}, // off -> on
+		tea.KeyMsg{Type: tea.KeyEnter}, // save
+	}
+	_, saved := driveDrawer(t, d, msgs...)
+	if saved == nil {
+		t.Fatal("expected a DrawerSaveMsg after toggling executive and saving")
+	}
+	if !saved.Agent.IsExecutive {
+		t.Error("toggled executive must save IsExecutive=true, got false")
+	}
+	if saved.Agent.AutoTalk {
+		t.Error("executive toggle must not flip AutoTalk")
+	}
+}
+
+// Without toggling, a new agent saves with IsExecutive=false.
+func TestDrawerCreateDefaultsExecutiveOff(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenCreate(nil, 0)
+
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	msgs := []tea.Msg{
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("scout")},
+		enter, enter, enter, enter, enter, enter,
+	}
+	_, saved := driveDrawer(t, d, msgs...)
+	if saved == nil {
+		t.Fatal("expected a DrawerSaveMsg")
+	}
+	if saved.Agent.IsExecutive {
+		t.Error("new agent must default to IsExecutive=false")
+	}
+}
+
 // Without toggling, a new agent saves with AutoTalk=false.
 func TestDrawerCreateDefaultsAutoTalkOff(t *testing.T) {
 	d := newAgentDrawer()
@@ -75,7 +153,7 @@ func TestDrawerCreateDefaultsAutoTalkOff(t *testing.T) {
 	enter := tea.KeyMsg{Type: tea.KeyEnter}
 	msgs := []tea.Msg{
 		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("scout")},
-		enter, enter, enter, enter, enter,
+		enter, enter, enter, enter, enter, enter,
 	}
 	_, saved := driveDrawer(t, d, msgs...)
 	if saved == nil {

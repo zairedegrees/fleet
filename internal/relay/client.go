@@ -24,12 +24,6 @@ type Agent struct {
 	Color       string `json:"color"`
 }
 
-type Profile struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
-	Role string `json:"role"`
-}
-
 type mpcRequest struct {
 	Jsonrpc string          `json:"jsonrpc"`
 	ID      int             `json:"id"`
@@ -117,33 +111,6 @@ func (c *Client) call(toolName string, args map[string]interface{}) (json.RawMes
 	return json.RawMessage(result.Content[0].Text), nil
 }
 
-func (c *Client) ListProjects() ([]string, error) {
-	// The relay has no list_projects endpoint.
-	// We discover projects by listing all agents (no project filter)
-	// and extracting unique project names.
-	data, err := c.call("list_agents", map[string]interface{}{})
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Agents []struct {
-			Project string `json:"project"`
-		} `json:"agents"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	seen := make(map[string]bool)
-	var projects []string
-	for _, a := range result.Agents {
-		if a.Project != "" && !seen[a.Project] {
-			seen[a.Project] = true
-			projects = append(projects, a.Project)
-		}
-	}
-	return projects, nil
-}
-
 func (c *Client) ListAgents(project string) ([]Agent, error) {
 	data, err := c.call("list_agents", map[string]interface{}{"project": project})
 	if err != nil {
@@ -156,20 +123,6 @@ func (c *Client) ListAgents(project string) ([]Agent, error) {
 		return nil, err
 	}
 	return result.Agents, nil
-}
-
-func (c *Client) ListProfiles(project string) ([]Profile, error) {
-	data, err := c.call("list_profiles", map[string]interface{}{"project": project})
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Profiles []Profile `json:"profiles"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return result.Profiles, nil
 }
 
 func (c *Client) DispatchTask(agent, project, description string) error {
@@ -235,15 +188,37 @@ func (c *Client) DeactivateAgent(name, project string) error {
 	return err
 }
 
+// AgentRegistration is the complete register_agent payload fleet owns. The
+// relay's re-register is a full-replace UPDATE: any field omitted is reset
+// server-side, so registration must always send the whole set.
+type AgentRegistration struct {
+	Name        string
+	Project     string
+	Role        string
+	ProfileSlug string
+	ReportsTo   string
+	IsExecutive bool
+}
+
 // RegisterAgent registers an agent on the relay with a profile_slug — the slug
-// is what lets dispatched tasks route to the agent. Mirrors the inline curl the
-// launch configure script issues.
+// is what lets dispatched tasks route to the agent — and no hierarchy.
 func (c *Client) RegisterAgent(name, project, role, profileSlug string) error {
+	return c.RegisterAgentFull(AgentRegistration{
+		Name: name, Project: project, Role: role, ProfileSlug: profileSlug,
+	})
+}
+
+// RegisterAgentFull registers an agent with every field fleet owns, including
+// reports_to and is_executive (the latter auto-creates the leadership team and
+// enables broadcast on the relay).
+func (c *Client) RegisterAgentFull(r AgentRegistration) error {
 	_, err := c.call("register_agent", map[string]interface{}{
-		"name":         name,
-		"project":      project,
-		"role":         role,
-		"profile_slug": profileSlug,
+		"name":         r.Name,
+		"project":      r.Project,
+		"role":         r.Role,
+		"profile_slug": r.ProfileSlug,
+		"reports_to":   r.ReportsTo,
+		"is_executive": r.IsExecutive,
 	})
 	return err
 }

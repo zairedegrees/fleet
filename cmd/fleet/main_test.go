@@ -237,6 +237,170 @@ func TestFollowPaneErasesStaleCharsOnShorterFrame(t *testing.T) {
 	}
 }
 
+// --relay-url must be the highest-priority source, then the config's URL,
+// then the built-in default — the flag was declared since v1.0 but never wired.
+func TestResolveRelayURLPriority(t *testing.T) {
+	if got := resolveRelayURL("http://flag/mcp", "http://cfg/mcp"); got != "http://flag/mcp" {
+		t.Errorf("flag must beat config URL, got %q", got)
+	}
+	if got := resolveRelayURL("", "http://cfg/mcp"); got != "http://cfg/mcp" {
+		t.Errorf("config URL must beat default, got %q", got)
+	}
+	if got := resolveRelayURL("", ""); got != defaultRelayURL {
+		t.Errorf("empty everything must fall back to default, got %q", got)
+	}
+	if got := resolveRelayURL("   ", "http://cfg/mcp"); got != "http://cfg/mcp" {
+		t.Errorf("whitespace-only flag means unset and must not win the chain, got %q", got)
+	}
+	if got := resolveRelayURL("   ", ""); got != defaultRelayURL {
+		t.Errorf("whitespace-only flag with no config must fall back to default, got %q", got)
+	}
+	if got := resolveRelayURL("  http://flag/mcp  ", "http://cfg/mcp"); got != "http://flag/mcp" {
+		t.Errorf("flag value must be trimmed, got %q", got)
+	}
+}
+
+func installFakeSessions(t *testing.T, sessions []string) *int {
+	t.Helper()
+	origList, origKill := listFleetSessions, killAllFleetSessions
+	t.Cleanup(func() { listFleetSessions, killAllFleetSessions = origList, origKill })
+	listFleetSessions = func() ([]string, error) { return sessions, nil }
+	kills := 0
+	killAllFleetSessions = func() error { kills++; return nil }
+	return &kills
+}
+
+// A failed tmux listing must surface as an error — swallowing it and reporting
+// "no sessions" would hide a broken tmux behind a clean exit.
+func TestKillAllSurfacesListError(t *testing.T) {
+	origList, origKill := listFleetSessions, killAllFleetSessions
+	t.Cleanup(func() { listFleetSessions, killAllFleetSessions = origList, origKill })
+	listFleetSessions = func() ([]string, error) { return nil, errors.New("tmux exploded") }
+	kills := 0
+	killAllFleetSessions = func() error { kills++; return nil }
+
+	var out, errOut bytes.Buffer
+	err := killAll(strings.NewReader("y\n"), &out, &errOut, false)
+	if err == nil || !strings.Contains(err.Error(), "tmux exploded") {
+		t.Fatalf("the tmux list error must surface with its cause, got: %v", err)
+	}
+	if kills != 0 {
+		t.Error("a failed listing must not kill anything")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("a failed listing must not prompt, got: %q", out.String())
+	}
+}
+
+// The accepted confirmation tokens are exactly "y" and "yes", case-insensitive
+// and trimmed — anything else (EOF, "n", prefixes, other words) is a No.
+func TestConfirmYesTokenSet(t *testing.T) {
+	accepted := []string{"y\n", "Y\n", "yes\n", "YES\n", "Yes\n", "  y  \n", "\tyes\n", "y"}
+	for _, in := range accepted {
+		if !confirmYes(strings.NewReader(in)) {
+			t.Errorf("input %q must be accepted", in)
+		}
+	}
+	rejected := []string{"", "\n", "n\n", "N\n", "no\n", "ye\n", "yess\n", "yes please\n", "y n\n", "oui\n", "1\n", "true\n"}
+	for _, in := range rejected {
+		if confirmYes(strings.NewReader(in)) {
+			t.Errorf("input %q must be rejected", in)
+		}
+	}
+}
+
+// --kill-all without --force must ask for y/N confirmation and abort on "n" —
+// it kills every project's sessions, the audit demanded confirm-by-default.
+// An abort is NOT a success: it must exit non-zero with an actionable stderr
+// line, so a script can tell "killed" from "did nothing".
+func TestKillAllPromptsAndAbortsOnNo(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev", "fleet-b-dev"})
+
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader("n\n"), &out, &errOut, false); err == nil {
+		t.Fatal("aborting must surface as a non-nil error (non-zero exit), got nil")
+	}
+	if *kills != 0 {
+		t.Error("answering n must not kill anything")
+	}
+	if !strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("expected a y/N prompt, got: %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Aborted") {
+		t.Errorf("expected an explicit abort message on stderr, got: %q", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "--force") {
+		t.Errorf("abort message must point non-interactive callers to --force, got: %q", errOut.String())
+	}
+}
+
+func TestKillAllProceedsOnYes(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader("y\n"), &out, &errOut, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 1 {
+		t.Error("answering y must kill the sessions")
+	}
+	if !strings.Contains(out.String(), "Killed 1 fleet session(s)") {
+		t.Errorf("expected kill report, got: %q", out.String())
+	}
+}
+
+// EOF defaults to No — a closed stdin (script, CI) must never nuke everything,
+// but it must also never exit 0 pretending it did: the caller gets a non-zero
+// exit and a stderr line pointing to --force.
+func TestKillAllEOFDefaultsToAbort(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, &errOut, false); err == nil {
+		t.Fatal("EOF abort must surface as a non-nil error (non-zero exit), got nil")
+	}
+	if *kills != 0 {
+		t.Error("EOF on stdin must abort, not kill")
+	}
+	if !strings.Contains(errOut.String(), "--force") {
+		t.Errorf("EOF abort must tell non-interactive callers about --force on stderr, got: %q", errOut.String())
+	}
+}
+
+func TestKillAllForceSkipsPrompt(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out, errOut bytes.Buffer
+	// No stdin available — --force must not read it.
+	if err := killAll(strings.NewReader(""), &out, &errOut, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 1 {
+		t.Error("--force must kill without confirmation")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("--force must not prompt, got: %q", out.String())
+	}
+}
+
+func TestKillAllNoSessionsNoPrompt(t *testing.T) {
+	kills := installFakeSessions(t, nil)
+
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, &errOut, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 0 {
+		t.Error("nothing to kill must not call the killer")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("nothing to kill must not prompt, got: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "No fleet sessions running") {
+		t.Errorf("expected the empty report, got: %q", out.String())
+	}
+}
+
 func TestReportLaunchResultsSilentOnAllSuccess(t *testing.T) {
 	results := []runner.LaunchResult{
 		{Agent: "dev", Success: true, Action: "created"},
