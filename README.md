@@ -20,6 +20,7 @@ Running a fleet of always-on agents is expensive. Agents that poll for work ever
 fleet treats tokens as the scarce resource:
 
 - Agents boot **registered but idle**: the tmux session is live and Claude is ready, but no polling loop runs. **Idle cost: zero tokens.**
+- fleet **registers each agent server-side** at launch (full identity: role, `profile_slug`, reporting line). Agents never self-register in their pane, so they can't accidentally wipe their own `profile_slug` — task routing keeps working regardless of relay version. Identity travels with the wake instead.
 - fleet **wakes an agent on dispatch**. The talk loop starts only when there is a task, then dies on its own after a few empty checks.
 - Net effect: agents spend tokens while working, not while waiting. About **95% saved on idle token cost.**
 
@@ -95,6 +96,10 @@ internal/doctor      prerequisite checks with install hints
 ```
 
 Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side by side. Config lives in `~/.fleet/configs/<project>.toml`.
+
+**Registration is server-side, never in-pane.** At launch fleet registers every agent on the relay with its full identity (role, `profile_slug`, reporting line) over HTTP — `profile_slug` is what routes dispatched tasks. Agents are never told to `/relay register` themselves, because a bare self-register omits `profile_slug` and an older relay's full-replace UPDATE would NULL it, silently breaking task routing. Instead, identity rides along with each wake: just before `/relay talk`, fleet sends the agent a one-line preamble stating who it is and instructing it not to call `register_agent`. Task routing therefore works against any relay version.
+
+Recommended (defense-in-depth, not required): run the [wrai.th](https://wrai.th) relay with **preserve-omitted re-registration**, so even an accidental bare re-register keeps the existing `profile_slug` instead of clearing it.
 
 Built with [Cobra](https://github.com/spf13/cobra) and [Charm Bubble Tea](https://github.com/charmbracelet/bubbletea).
 

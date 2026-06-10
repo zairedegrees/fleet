@@ -151,7 +151,7 @@ func identityPreamble(name, project string) string {
 }
 
 // shellSingleQuote wraps s for a single-quoted tmux send-keys argument, escaping
-// embedded single quotes with the standard '\'' idiom.
+// embedded single quotes with the standard close-quote/escaped-quote/open-quote idiom.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
