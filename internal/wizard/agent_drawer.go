@@ -26,19 +26,28 @@ const (
 	dfColor
 	dfReportsTo
 	dfAutoTalk
+	dfExecutive
 )
 
 // autoTalkOpts are the auto-talk toggle options (index 1 = on).
 var autoTalkOpts = []string{"off", "on"}
 
+// executiveOpts are the executive toggle options (index 1 = on).
+var executiveOpts = []string{"off", "on"}
+
 // agentDrawer is the bottom drawer sub-model for edit/create.
 type agentDrawer struct {
-	nameInput   textinput.Model
-	roleInput   textinput.Model
-	colorIdx    int
-	reportsIdx  int
-	reportOpts  []string // "(none)" + agent names
-	autoTalkIdx int      // index into autoTalkOpts
+	nameInput    textinput.Model
+	roleInput    textinput.Model
+	colorIdx     int
+	reportsIdx   int
+	reportOpts   []string // "(none)" + agent names
+	autoTalkIdx  int      // index into autoTalkOpts
+	executiveIdx int      // index into executiveOpts
+
+	// base is the agent being edited (zero for create): save() starts from it
+	// so fields the drawer doesn't manage survive an edit instead of being dropped.
+	base config.AgentConfig
 
 	field     drawerField
 	mode      drawerMode // drawerEdit or drawerCreate
@@ -69,6 +78,7 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 	d.editIndex = index
 	d.title = "Edit: " + agent.Name
 	d.field = dfName
+	d.base = agent
 
 	d.nameInput.SetValue(agent.Name)
 	d.nameInput.Focus()
@@ -102,6 +112,11 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 	if agent.AutoTalk {
 		d.autoTalkIdx = 1
 	}
+
+	d.executiveIdx = 0
+	if agent.IsExecutive {
+		d.executiveIdx = 1
+	}
 }
 
 // OpenCreate opens the drawer for a new agent.
@@ -110,6 +125,7 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 	d.editIndex = -1
 	d.title = "New Agent"
 	d.field = dfName
+	d.base = config.AgentConfig{}
 
 	d.nameInput.SetValue("")
 	d.nameInput.Focus()
@@ -122,6 +138,7 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 		d.reportOpts = append(d.reportOpts, name)
 	}
 	d.autoTalkIdx = 0
+	d.executiveIdx = 0
 }
 
 func (d agentDrawer) Update(msg tea.Msg) (agentDrawer, tea.Cmd) {
@@ -163,6 +180,8 @@ func (d *agentDrawer) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return d.handleSelectField(msg, &d.reportsIdx, len(d.reportOpts))
 	case dfAutoTalk:
 		return d.handleSelectField(msg, &d.autoTalkIdx, len(autoTalkOpts))
+	case dfExecutive:
+		return d.handleSelectField(msg, &d.executiveIdx, len(executiveOpts))
 	}
 	return nil
 }
@@ -196,7 +215,7 @@ func (d *agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) tea
 			*idx++
 		}
 	case "enter":
-		if d.field == dfAutoTalk {
+		if d.field == dfExecutive {
 			return d.save()
 		}
 		return d.nextField()
@@ -225,6 +244,9 @@ func (d *agentDrawer) nextField() tea.Cmd {
 		d.field = dfAutoTalk
 		return nil
 	case dfAutoTalk:
+		d.field = dfExecutive
+		return nil
+	case dfExecutive:
 		return d.save()
 	}
 	return nil
@@ -241,13 +263,13 @@ func (d *agentDrawer) save() tea.Cmd {
 		reportsTo = d.reportOpts[d.reportsIdx]
 	}
 
-	agent := config.AgentConfig{
-		Name:      name,
-		Color:     agentColors[d.colorIdx],
-		Role:      strings.TrimSpace(d.roleInput.Value()),
-		ReportsTo: reportsTo,
-		AutoTalk:  d.autoTalkIdx == 1,
-	}
+	agent := d.base
+	agent.Name = name
+	agent.Color = agentColors[d.colorIdx]
+	agent.Role = strings.TrimSpace(d.roleInput.Value())
+	agent.ReportsTo = reportsTo
+	agent.AutoTalk = d.autoTalkIdx == 1
+	agent.IsExecutive = d.executiveIdx == 1
 
 	index := d.editIndex
 	return func() tea.Msg {
@@ -325,6 +347,21 @@ func (d agentDrawer) View() string {
 	sb.WriteString(label)
 	for i, opt := range autoTalkOpts {
 		if i == d.autoTalkIdx {
+			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
+		} else {
+			sb.WriteString(dimStyle.Render(opt) + " ")
+		}
+	}
+	sb.WriteString("\n")
+
+	// Executive field
+	label = dimStyle.Render("  Executive:  ")
+	if d.field == dfExecutive {
+		label = selectedStyle.Render("▸ Executive:  ")
+	}
+	sb.WriteString(label)
+	for i, opt := range executiveOpts {
+		if i == d.executiveIdx {
 			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
 		} else {
 			sb.WriteString(dimStyle.Render(opt) + " ")

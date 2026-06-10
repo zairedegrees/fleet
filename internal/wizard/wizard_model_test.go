@@ -70,6 +70,7 @@ func TestWizardAutoTalkRoundTrip(t *testing.T) {
 	step(tab)                            // color -> reports-to
 	step(tab)                            // reports-to -> auto-talk
 	step(tea.KeyMsg{Type: tea.KeyRight}) // off -> on
+	step(tea.KeyMsg{Type: tea.KeyEnter}) // auto-talk -> executive
 	step(tea.KeyMsg{Type: tea.KeyEnter}) // save -> DrawerSaveMsg
 
 	if m.drawerOpen {
