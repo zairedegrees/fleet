@@ -272,12 +272,14 @@ func installFakeSessions(t *testing.T, sessions []string) *int {
 
 // --kill-all without --force must ask for y/N confirmation and abort on "n" —
 // it kills every project's sessions, the audit demanded confirm-by-default.
+// An abort is NOT a success: it must exit non-zero with an actionable stderr
+// line, so a script can tell "killed" from "did nothing".
 func TestKillAllPromptsAndAbortsOnNo(t *testing.T) {
 	kills := installFakeSessions(t, []string{"fleet-a-dev", "fleet-b-dev"})
 
-	var out bytes.Buffer
-	if err := killAll(strings.NewReader("n\n"), &out, false); err != nil {
-		t.Fatalf("aborting must not be an error, got: %v", err)
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader("n\n"), &out, &errOut, false); err == nil {
+		t.Fatal("aborting must surface as a non-nil error (non-zero exit), got nil")
 	}
 	if *kills != 0 {
 		t.Error("answering n must not kill anything")
@@ -285,16 +287,19 @@ func TestKillAllPromptsAndAbortsOnNo(t *testing.T) {
 	if !strings.Contains(out.String(), "[y/N]") {
 		t.Errorf("expected a y/N prompt, got: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "Aborted") {
-		t.Errorf("expected an explicit abort message, got: %q", out.String())
+	if !strings.Contains(errOut.String(), "Aborted") {
+		t.Errorf("expected an explicit abort message on stderr, got: %q", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "--force") {
+		t.Errorf("abort message must point non-interactive callers to --force, got: %q", errOut.String())
 	}
 }
 
 func TestKillAllProceedsOnYes(t *testing.T) {
 	kills := installFakeSessions(t, []string{"fleet-a-dev"})
 
-	var out bytes.Buffer
-	if err := killAll(strings.NewReader("y\n"), &out, false); err != nil {
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader("y\n"), &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if *kills != 1 {
@@ -305,25 +310,30 @@ func TestKillAllProceedsOnYes(t *testing.T) {
 	}
 }
 
-// EOF / empty answer defaults to No — a closed stdin must never nuke everything.
+// EOF defaults to No — a closed stdin (script, CI) must never nuke everything,
+// but it must also never exit 0 pretending it did: the caller gets a non-zero
+// exit and a stderr line pointing to --force.
 func TestKillAllEOFDefaultsToAbort(t *testing.T) {
 	kills := installFakeSessions(t, []string{"fleet-a-dev"})
 
-	var out bytes.Buffer
-	if err := killAll(strings.NewReader(""), &out, false); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, &errOut, false); err == nil {
+		t.Fatal("EOF abort must surface as a non-nil error (non-zero exit), got nil")
 	}
 	if *kills != 0 {
 		t.Error("EOF on stdin must abort, not kill")
+	}
+	if !strings.Contains(errOut.String(), "--force") {
+		t.Errorf("EOF abort must tell non-interactive callers about --force on stderr, got: %q", errOut.String())
 	}
 }
 
 func TestKillAllForceSkipsPrompt(t *testing.T) {
 	kills := installFakeSessions(t, []string{"fleet-a-dev"})
 
-	var out bytes.Buffer
+	var out, errOut bytes.Buffer
 	// No stdin available — --force must not read it.
-	if err := killAll(strings.NewReader(""), &out, true); err != nil {
+	if err := killAll(strings.NewReader(""), &out, &errOut, true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if *kills != 1 {
@@ -337,8 +347,8 @@ func TestKillAllForceSkipsPrompt(t *testing.T) {
 func TestKillAllNoSessionsNoPrompt(t *testing.T) {
 	kills := installFakeSessions(t, nil)
 
-	var out bytes.Buffer
-	if err := killAll(strings.NewReader(""), &out, false); err != nil {
+	var out, errOut bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, &errOut, false); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if *kills != 0 {

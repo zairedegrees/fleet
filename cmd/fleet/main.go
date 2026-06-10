@@ -184,13 +184,14 @@ func runKill() error {
 }
 
 func runKillAll() error {
-	return killAll(os.Stdin, os.Stdout, flagForce)
+	return killAll(os.Stdin, os.Stdout, os.Stderr, flagForce)
 }
 
 // killAll stops every fleet session of every project. The blast radius is
 // total, so without --force it requires an explicit y/N confirmation; EOF or
-// anything but y/yes aborts.
-func killAll(in io.Reader, out io.Writer, force bool) error {
+// anything but y/yes aborts. An abort is loud — stderr line + non-zero exit —
+// so a non-interactive caller can't mistake "did nothing" for "killed all".
+func killAll(in io.Reader, out, errOut io.Writer, force bool) error {
 	sessions, err := listFleetSessions()
 	if err != nil {
 		return fmt.Errorf("cannot list tmux sessions: %w", err)
@@ -202,8 +203,8 @@ func killAll(in io.Reader, out io.Writer, force bool) error {
 	if !force {
 		fmt.Fprintf(out, "  Kill %d fleet session(s) across ALL projects? [y/N] ", len(sessions))
 		if !confirmYes(in) {
-			fmt.Fprintln(out, "  Aborted. Use --force to skip this prompt.")
-			return nil
+			fmt.Fprintf(errOut, "  Aborted — no session killed. Use --force to skip this prompt (non-interactive use).\n")
+			return fmt.Errorf("kill-all aborted: confirmation not received")
 		}
 	}
 	killAllFleetSessions()
