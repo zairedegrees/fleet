@@ -27,6 +27,16 @@ func buildSendKeysArgs(session, text string) []string {
 	return []string{"send-keys", "-t", session, text, "Enter"}
 }
 
+// buildTypeArgs types text into a pane WITHOUT submitting (no trailing Enter).
+func buildTypeArgs(session, text string) []string {
+	return []string{"send-keys", "-t", session, text}
+}
+
+// buildEnterArgs submits the current pane input by sending Enter alone.
+func buildEnterArgs(session string) []string {
+	return []string{"send-keys", "-t", session, "Enter"}
+}
+
 func CreateSession(project, agent, cwd string) error {
 	session := SessionName(project, agent)
 	args := buildCreateArgs(session, cwd)
@@ -176,7 +186,20 @@ func WakeAgent(project, agent string) error {
 	if !HasSession(project, agent) {
 		return fmt.Errorf("no tmux session for agent %q in project %q", agent, project)
 	}
-	return SendKeys(project, agent, "/relay talk")
+	return SubmitCommand(project, agent, "/relay talk")
+}
+
+// SubmitCommand types a Claude TUI command into a pane and submits it with a
+// SEPARATE Enter after a short settle delay. A /relay skill command sent as
+// "text Enter" in one send-keys is typed but not submitted — the Enter is
+// swallowed by the skill autocomplete (confirmed for /relay register).
+func SubmitCommand(project, agent, cmd string) error {
+	session := SessionName(project, agent)
+	if err := exec.Command("tmux", buildTypeArgs(session, cmd)...).Run(); err != nil {
+		return err
+	}
+	time.Sleep(time.Second)
+	return exec.Command("tmux", buildEnterArgs(session)...).Run()
 }
 
 // waitGone polls gone() up to attempts times (interval apart), returning true as

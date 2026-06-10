@@ -176,7 +176,12 @@ func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) str
 		if agent.ReportsTo != "" {
 			registerCmd += " Reports to " + agent.ReportsTo + "."
 		}
-		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s' Enter\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
+		// Type the command, let the input + skill autocomplete settle, then submit
+		// with a SEPARATE Enter. A long /relay command sent as '...' Enter in one
+		// keystroke is typed but never submitted (the Enter is swallowed).
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '%s'\n", session, strings.ReplaceAll(registerCmd, "'", "'\\''")))
+		script.WriteString("  sleep 1\n")
+		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
 		script.WriteString("  sleep 3\n")
 
 		// Set profile_slug via direct relay call — without this, agents can't see dispatched tasks
@@ -203,7 +208,9 @@ func buildConfigureScript(cfg *config.FleetConfig, relayURL, logPath string) str
 
 		if agent.AutoTalk {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
-			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk' Enter\n", session))
+			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/relay talk'\n", session))
+			script.WriteString("  sleep 1\n")
+			script.WriteString(fmt.Sprintf("  tmux send-keys -t %s Enter\n", session))
 		}
 
 		script.WriteString(fmt.Sprintf("  echo '✓ %s configured'\n", session))
