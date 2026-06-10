@@ -144,6 +144,24 @@ func TestWizardLoadedProjectCanEditRelayURL(t *testing.T) {
 	}
 }
 
+// Pins focusRelayURL in the isTextInput routing: a shortcut letter typed into
+// the focused relay URL field must land in the input, not quit the wizard.
+func TestWizardTypingIntoRelayURLFieldIsNotShortcut(t *testing.T) {
+	m := newWizardModel(nil)
+	m.project.focus = focusRelayURL
+	m.project.relayInput.SetValue("")
+	m.project.relayInput.Focus()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	wm := updated.(wizardModel)
+	if wm.quitting {
+		t.Fatal("'q' typed into the relay URL field must not quit the wizard")
+	}
+	if got := wm.project.relayInput.Value(); got != "q" {
+		t.Errorf("typed rune must land in the relay URL input, got %q", got)
+	}
+}
+
 // Only esc was repurposed as step-back on the presets focus — q still quits.
 func TestWizardPresetsQStillQuits(t *testing.T) {
 	m := newWizardModel(nil)
