@@ -82,14 +82,6 @@ func WaitForPrompt(project, agent string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for prompt on %s", session)
 }
 
-func IsIdle(project, agent string) bool {
-	out, err := CapturePane(project, agent)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(out, "❯")
-}
-
 // classifyListErr maps a `tmux list-sessions` failure to either nil (the benign
 // "no server running"/"no sessions" case — treat as zero sessions) or a real
 // error when tmux is absent or failed unexpectedly.
