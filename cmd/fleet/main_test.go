@@ -86,6 +86,31 @@ func TestTailLines(t *testing.T) {
 	}
 }
 
+// `fleet logs -n -5 dev` reached tailLines with a negative n and panicked on
+// the slice bound; non-positive n must yield no lines instead.
+func TestTailLinesClampsNonPositiveN(t *testing.T) {
+	if got := tailLines("a\nb\nc", -5); got != "" {
+		t.Errorf("negative n must yield no lines, got %q", got)
+	}
+	if got := tailLines("a\nb\nc", 0); got != "" {
+		t.Errorf("zero n must yield no lines, got %q", got)
+	}
+}
+
+// The flag itself must be rejected up front with a clear error, before any
+// config/tmux work.
+func TestRunLogsRejectsNonPositiveLines(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().IntP("lines", "n", 50, "")
+	cmd.Flags().BoolP("follow", "f", true, "")
+	cmd.Flags().Set("lines", "-5")
+
+	err := runLogs(cmd, []string{"dev"})
+	if err == nil || !strings.Contains(err.Error(), "--lines") {
+		t.Errorf("expected a --lines flag error, got: %v", err)
+	}
+}
+
 // `fleet logs -f` must tell the user how to get out.
 func TestLogsHeaderHasCtrlCHint(t *testing.T) {
 	h := logsHeader("proj", "dev")

@@ -186,6 +186,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	agent := args[0]
 	follow, _ := cmd.Flags().GetBool("follow")
 	lines, _ := cmd.Flags().GetInt("lines")
+	if lines < 1 {
+		return fmt.Errorf("--lines must be at least 1, got %d", lines)
+	}
 
 	cfg, err := config.LoadLast()
 	if err != nil {
@@ -213,6 +216,9 @@ func runLogs(cmd *cobra.Command, args []string) error {
 }
 
 func tailLines(output string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	allLines := strings.Split(output, "\n")
 	if len(allLines) > n {
 		allLines = allLines[len(allLines)-n:]
