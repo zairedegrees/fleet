@@ -100,6 +100,13 @@ func main() {
 	addCmd.MarkFlagRequired("role")
 	root.AddCommand(addCmd)
 
+	usageCmd := &cobra.Command{
+		Use:   "usage",
+		Short: "Show per-project fleet usage (agents, polling, tasks, vault)",
+		RunE:  runUsage,
+	}
+	root.AddCommand(usageCmd)
+
 	stopCmd := &cobra.Command{
 		Use:   "stop <agent>",
 		Short: "Stop a running agent",
