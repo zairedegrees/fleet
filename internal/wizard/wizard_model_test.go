@@ -104,6 +104,59 @@ func TestWizardLoadedProjectPrefillsRelayURL(t *testing.T) {
 	}
 }
 
+// Reopening an existing project must leave a way to edit its saved relay URL:
+// from the presets focus, esc steps back into the prefilled relay URL field
+// instead of quitting the wizard.
+func TestWizardLoadedProjectCanEditRelayURL(t *testing.T) {
+	m := newWizardModel(nil)
+	updated, _ := m.Update(ProjectLoadedMsg{Config: &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "p", Cwd: "/tmp", RelayURL: "http://saved.example:7000/mcp"},
+	}})
+	wm := updated.(wizardModel)
+
+	// Loaded projects land on the agents panel; tab back to the left panel.
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyTab})
+	wm = updated.(wizardModel)
+	if wm.activePanel != panelLeft || wm.project.focus != focusPresets {
+		t.Fatalf("expected presets focus on the left panel, got panel=%v focus=%v", wm.activePanel, wm.project.focus)
+	}
+
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	wm = updated.(wizardModel)
+	if wm.quitting {
+		t.Fatal("esc on the presets step must step back, not quit the wizard")
+	}
+	if wm.project.focus != focusRelayURL {
+		t.Fatalf("esc from presets must focus the relay URL field, got %v", wm.project.focus)
+	}
+	if got := wm.project.relayInput.Value(); got != "http://saved.example:7000/mcp" {
+		t.Fatalf("relay field must keep the saved URL, got %q", got)
+	}
+
+	wm.project.relayInput.SetValue("http://edited.example:7100/mcp")
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	wm = updated.(wizardModel)
+	if wm.project.focus != focusPresets {
+		t.Fatalf("confirming the edit must return to presets, got %v", wm.project.focus)
+	}
+	if got := wm.project.RelayURL(); got != "http://edited.example:7100/mcp" {
+		t.Errorf("edited relay URL must be kept, got %q", got)
+	}
+}
+
+// Only esc was repurposed as step-back on the presets focus — q still quits.
+func TestWizardPresetsQStillQuits(t *testing.T) {
+	m := newWizardModel(nil)
+	m.project.ready = true
+	m.project.focus = focusPresets
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	wm := updated.(wizardModel)
+	if !wm.quitting {
+		t.Error("'q' on the presets step must quit the wizard")
+	}
+}
+
 // Toggling auto-talk in the drawer must write back to the real agent entry in
 // the model (not a value-receiver copy), flow into the Result config, and
 // survive a TOML save/load round-trip.

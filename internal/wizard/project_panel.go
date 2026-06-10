@@ -346,6 +346,10 @@ func validateRelayURL(raw string) error {
 
 func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
+	case "esc":
+		p.focus = focusRelayURL
+		p.relayInput.Focus()
+		return p, textinput.Blink
 	case "up", "k":
 		if p.presetCursor > 0 {
 			p.presetCursor--
