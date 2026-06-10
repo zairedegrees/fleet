@@ -195,10 +195,17 @@ func KillAllFleetSessions() error {
 	return nil
 }
 
-// WakeAgent sends /relay talk to a running agent session.
+// WakeAgent delivers the identity preamble (prose, plain send-keys + Enter) so
+// the woken agent knows who it is and never self-registers — a bare
+// register_agent drops profile_slug and an old relay's full-replace UPDATE NULLs
+// it, breaking task routing — then sends /relay talk with the separate-Enter the
+// skill autocomplete requires.
 func WakeAgent(project, agent string) error {
 	if !HasSession(project, agent) {
 		return fmt.Errorf("no tmux session for agent %q in project %q", agent, project)
+	}
+	if err := SendKeys(project, agent, identityPreamble(agent, project)); err != nil {
+		return err
 	}
 	return SubmitCommand(project, agent, "/relay talk")
 }
