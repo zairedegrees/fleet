@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,7 @@ type projectPanel struct {
 
 	// Relay URL input, prefilled with the default relay
 	relayInput textinput.Model
+	relayErr   string // validation error for the relay URL step
 
 	// Presets
 	presets      []Preset
@@ -302,10 +304,21 @@ func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		p.focus = focusPath
+		p.relayErr = ""
 		p.relayInput.Blur()
 		p.pathInput.Focus()
 		return p, textinput.Blink
 	case "enter":
+		// Validate here, on submit: a typo'd URL would otherwise only fail
+		// at launch time, after the wizard has exited and the config is gone.
+		// Empty still means "use the default" (see RelayURL).
+		if val := strings.TrimSpace(p.relayInput.Value()); val != "" {
+			if err := validateRelayURL(val); err != nil {
+				p.relayErr = err.Error()
+				return p, nil
+			}
+		}
+		p.relayErr = ""
 		p.focus = focusPresets
 		p.relayInput.Blur()
 		p.ready = true
@@ -315,6 +328,20 @@ func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	var cmd tea.Cmd
 	p.relayInput, cmd = p.relayInput.Update(msg)
 	return p, cmd
+}
+
+func validateRelayURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid relay URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("relay URL must start with http:// or https://")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("relay URL needs a host, e.g. %s", config.DefaultRelayURL)
+	}
+	return nil
 }
 
 func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
@@ -397,6 +424,9 @@ func (p projectPanel) View(active bool) string {
 		// Relay URL input mode — path is confirmed
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
 		sb.WriteString("  Relay: " + p.relayInput.View() + "\n")
+		if p.relayErr != "" {
+			sb.WriteString("  " + errorStyle.Render("⚠ "+p.relayErr) + "\n")
+		}
 	} else {
 		// Confirmed — show name + path + relay
 		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
