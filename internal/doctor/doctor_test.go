@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -50,6 +51,29 @@ func TestInstallHintPerOS(t *testing.T) {
 		if got := installHint(tc.goos, tc.pkg); got != tc.want {
 			t.Errorf("installHint(%q, %q) = %q, want %q", tc.goos, tc.pkg, got, tc.want)
 		}
+	}
+}
+
+// The tmux check must route its FixCmd through installHint: a hardcoded
+// "brew install tmux" would be wrong everywhere but darwin. Pinned per-OS so
+// reverting the check to a brew-only hint fails here.
+func TestTmuxCheckMissingRoutesThroughInstallHint(t *testing.T) {
+	probeErr := errors.New("exec: \"tmux\": executable file not found in $PATH")
+	for _, goos := range []string{"darwin", "linux", "freebsd"} {
+		c := tmuxCheck(goos, "", probeErr)
+		if c.Status != "missing" {
+			t.Fatalf("goos %s: expected status missing, got %q", goos, c.Status)
+		}
+		if want := installHint(goos, "tmux"); c.FixCmd != want {
+			t.Errorf("goos %s: FixCmd = %q, want %q", goos, c.FixCmd, want)
+		}
+	}
+}
+
+func TestTmuxCheckOK(t *testing.T) {
+	c := tmuxCheck("linux", "tmux 3.4", nil)
+	if c.Status != "ok" || c.Detail != "tmux 3.4" || c.FixCmd != "" {
+		t.Fatalf("expected ok check with version detail and no FixCmd, got %+v", c)
 	}
 }
 
