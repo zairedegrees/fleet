@@ -155,69 +155,6 @@ func runKillAll() error {
 	return nil
 }
 
-func runStatus() error {
-	sessions, err := runner.ListFleetSessions()
-	if err != nil {
-		return fmt.Errorf("cannot list tmux sessions: %w", err)
-	}
-	if len(sessions) == 0 {
-		fmt.Println("  No fleet sessions running.")
-		return nil
-	}
-	fmt.Printf("  %d fleet session(s):\n\n", len(sessions))
-
-	// Group sessions by project for display
-	grouped := make(map[string][]string)
-	var order []string
-	for _, s := range sessions {
-		// Parse "fleet-{project}-{agent}" — project is everything between
-		// first "fleet-" and last "-"
-		project := extractProject(s)
-		if _, seen := grouped[project]; !seen {
-			order = append(order, project)
-		}
-		grouped[project] = append(grouped[project], s)
-	}
-
-	for _, project := range order {
-		fmt.Printf("    [%s]\n", project)
-		for _, s := range grouped[project] {
-			agent := runner.AgentFromSession(project, s)
-			idle := "busy"
-			if runner.IsIdle(project, agent) {
-				idle = "idle"
-			}
-			fmt.Printf("      %s  [%s]\n", s, idle)
-		}
-		fmt.Println()
-	}
-	return nil
-}
-
-// extractProject parses the project name from a fleet session name.
-// Format: "fleet-{project}-{agent}"
-// We use the last config to identify known project names, otherwise
-// we take everything between "fleet-" and the last "-".
-func extractProject(session string) string {
-	// Strip "fleet-" prefix
-	rest := session[len("fleet-"):]
-	// The agent name is after the last dash
-	lastDash := lastIndexByte(rest, '-')
-	if lastDash < 0 {
-		return rest
-	}
-	return rest[:lastDash]
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
-}
-
 func runDispatch(cmd *cobra.Command, args []string) error {
 	agent, _ := cmd.Flags().GetString("to")
 	description := strings.Join(args, " ")

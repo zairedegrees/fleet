@@ -185,6 +185,35 @@ func (c *Client) DispatchTask(agent, project, description string) error {
 	return err
 }
 
+// CountActiveTasks returns the number of non-done/cancelled tasks routed to a
+// profile slug. Backs `fleet --status` — the relay task board is the source of
+// truth for agent workload, not the tmux pane content.
+func (c *Client) CountActiveTasks(project, profile string) (int, error) {
+	data, err := c.call("list_tasks", map[string]interface{}{
+		"project": project,
+		"profile": profile,
+		"status":  "active",
+	})
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		Tasks []struct {
+			ID string `json:"id"`
+		} `json:"tasks"`
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return 0, err
+	}
+	// The tasks array is truncated at the relay's limit; count is authoritative
+	// when present.
+	if result.Count > 0 {
+		return result.Count, nil
+	}
+	return len(result.Tasks), nil
+}
+
 func (c *Client) Health() error {
 	_, err := c.call("list_orgs", map[string]interface{}{})
 	return err
