@@ -11,6 +11,14 @@ import (
 
 const sessionPrefix = "fleet"
 
+// execCommand is the package's exec seam — tests swap it to pin the exact
+// argv without spawning tmux/bash/osascript.
+var execCommand = exec.Command
+
+// submitSettle is the pause between typing a command and the separate Enter,
+// a var so tests don't pay the real settle delay.
+var submitSettle = time.Second
+
 // sanitizeProject replaces characters that are invalid in tmux session names.
 func sanitizeProject(project string) string {
 	return strings.ReplaceAll(project, ".", "-")
@@ -41,29 +49,29 @@ func buildEnterArgs(session string) []string {
 func CreateSession(project, agent, cwd string) error {
 	session := SessionName(project, agent)
 	args := buildCreateArgs(session, cwd)
-	return exec.Command("tmux", args...).Run()
+	return execCommand("tmux", args...).Run()
 }
 
 func SendKeys(project, agent, text string) error {
 	session := SessionName(project, agent)
 	args := buildSendKeysArgs(session, text)
-	return exec.Command("tmux", args...).Run()
+	return execCommand("tmux", args...).Run()
 }
 
 func KillSession(project, agent string) error {
 	session := SessionName(project, agent)
-	return exec.Command("tmux", "kill-session", "-t", session).Run()
+	return execCommand("tmux", "kill-session", "-t", session).Run()
 }
 
 func HasSession(project, agent string) bool {
 	session := SessionName(project, agent)
-	err := exec.Command("tmux", "has-session", "-t", session).Run()
+	err := execCommand("tmux", "has-session", "-t", session).Run()
 	return err == nil
 }
 
 func CapturePane(project, agent string) (string, error) {
 	session := SessionName(project, agent)
-	out, err := exec.Command("tmux", "capture-pane", "-t", session, "-p").Output()
+	out, err := execCommand("tmux", "capture-pane", "-t", session, "-p").Output()
 	if err != nil {
 		return "", err
 	}
@@ -74,7 +82,7 @@ func WaitForPrompt(project, agent string, timeout time.Duration) error {
 	session := SessionName(project, agent)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("tmux", "capture-pane", "-t", session, "-p").Output()
+		out, err := execCommand("tmux", "capture-pane", "-t", session, "-p").Output()
 		if err == nil && strings.Contains(string(out), "❯") {
 			return nil
 		}
@@ -113,7 +121,7 @@ func classifyListErr(goos string, err error, stderr []byte) error {
 // listSessions returns every tmux session name, distinguishing a broken/absent
 // tmux (error) from a server with no sessions (empty, nil).
 func listSessions() ([]string, error) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := execCommand("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		var stderr []byte
@@ -173,7 +181,7 @@ func ListFleetSessions() ([]string, error) {
 func KillProjectSessions(project string) (int, error) {
 	sessions, _ := ListProjectSessions(project)
 	for _, s := range sessions {
-		exec.Command("tmux", "kill-session", "-t", s).Run()
+		execCommand("tmux", "kill-session", "-t", s).Run()
 	}
 	return len(sessions), nil
 }
@@ -182,7 +190,7 @@ func KillProjectSessions(project string) (int, error) {
 func KillAllFleetSessions() error {
 	sessions, _ := ListFleetSessions()
 	for _, s := range sessions {
-		exec.Command("tmux", "kill-session", "-t", s).Run()
+		execCommand("tmux", "kill-session", "-t", s).Run()
 	}
 	return nil
 }
@@ -201,11 +209,11 @@ func WakeAgent(project, agent string) error {
 // swallowed by the skill autocomplete (confirmed for /relay register).
 func SubmitCommand(project, agent, cmd string) error {
 	session := SessionName(project, agent)
-	if err := exec.Command("tmux", buildTypeArgs(session, cmd)...).Run(); err != nil {
+	if err := execCommand("tmux", buildTypeArgs(session, cmd)...).Run(); err != nil {
 		return err
 	}
-	time.Sleep(time.Second)
-	return exec.Command("tmux", buildEnterArgs(session)...).Run()
+	time.Sleep(submitSettle)
+	return execCommand("tmux", buildEnterArgs(session)...).Run()
 }
 
 // waitGone polls gone() up to attempts times (interval apart), returning true as

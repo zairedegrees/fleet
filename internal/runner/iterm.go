@@ -3,7 +3,6 @@ package runner
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -27,7 +26,7 @@ func OpenITerm2Grid(project string, agents []string) error {
 	os.WriteFile(scriptPath, []byte(script), 0755)
 
 	// Try running it — may fail due to macOS Automation permissions
-	cmd := exec.Command("osascript", scriptPath)
+	cmd := execCommand("osascript", scriptPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()

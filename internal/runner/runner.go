@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -93,7 +92,7 @@ func ConfigureAgentsAsync(cfg *config.FleetConfig) (string, error) {
 // spawnDetached starts the configure script as a detached process that survives
 // fleet exit.
 func spawnDetached(scriptPath string) error {
-	cmd := exec.Command("bash", scriptPath)
+	cmd := execCommand("bash", scriptPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd.Start()
 }
