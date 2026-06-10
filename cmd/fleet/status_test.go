@@ -102,7 +102,7 @@ func TestBuildStatusDashAgentResolvesAgainstKnownProject(t *testing.T) {
 	}
 	installFakeRelay(t, fake)
 
-	projects, warning := buildStatus([]string{"fleet-demo-ux-designer"}, projectConfigs("demo"), defaultRelayURL)
+	projects, warning := buildStatus([]string{"fleet-demo-ux-designer"}, projectConfigs("demo"), defaultRelayURL, "")
 	if warning != "" {
 		t.Fatalf("unexpected warning: %q", warning)
 	}
@@ -133,7 +133,7 @@ func TestBuildStatusDotProjectQueriesRealName(t *testing.T) {
 	}
 	installFakeRelay(t, fake)
 
-	projects, _ := buildStatus([]string{"fleet-v1stud-io-dev"}, projectConfigs("v1stud.io"), defaultRelayURL)
+	projects, _ := buildStatus([]string{"fleet-v1stud-io-dev"}, projectConfigs("v1stud.io"), defaultRelayURL, "")
 	if len(projects) != 1 || projects[0].Project != "v1stud.io" {
 		t.Fatalf("expected project group v1stud.io, got %+v", projects)
 	}
@@ -152,7 +152,7 @@ func TestBuildStatusUnknownSessionIsHonest(t *testing.T) {
 	fake := &fakeQuerier{}
 	installFakeRelay(t, fake)
 
-	projects, _ := buildStatus([]string{"fleet-mystery-agent"}, projectConfigs("demo"), defaultRelayURL)
+	projects, _ := buildStatus([]string{"fleet-mystery-agent"}, projectConfigs("demo"), defaultRelayURL, "")
 	var found *agentStatus
 	for i := range projects {
 		for j := range projects[i].Agents {
@@ -186,7 +186,7 @@ func TestBuildStatusRendersGhostsWithZeroSessions(t *testing.T) {
 	}
 	installFakeRelay(t, fake)
 
-	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL)
+	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL, "")
 	if warning != "" {
 		t.Fatalf("unexpected warning: %q", warning)
 	}
@@ -205,7 +205,7 @@ func TestBuildStatusZeroSessionsRelayDownWarns(t *testing.T) {
 	fake := &fakeQuerier{listErr: errors.New("connection refused")}
 	installFakeRelay(t, fake)
 
-	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL)
+	projects, warning := buildStatus(nil, projectConfigs("demo"), defaultRelayURL, "")
 	if len(projects) != 0 {
 		t.Errorf("expected no projects when relay is down and no sessions, got %+v", projects)
 	}
@@ -246,7 +246,7 @@ func TestBuildStatusUsesPerProjectRelayURL(t *testing.T) {
 		{Project: config.ProjectConfig{Name: "a", RelayURL: "http://a.example/mcp"}},
 		{Project: config.ProjectConfig{Name: "b"}},
 	}
-	buildStatus([]string{"fleet-a-dev", "fleet-b-dev"}, configs, "http://fallback/mcp")
+	buildStatus([]string{"fleet-a-dev", "fleet-b-dev"}, configs, "http://fallback/mcp", "")
 
 	want := map[string]bool{"http://a.example/mcp": true, "http://fallback/mcp": true}
 	for _, u := range urls {
@@ -254,6 +254,33 @@ func TestBuildStatusUsesPerProjectRelayURL(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("expected a client per project relay URL, missing %v (got %v)", want, urls)
+	}
+}
+
+// --relay-url overrides EVERY project's relay resolution — even a project
+// whose saved config carries its own relay_url.
+func TestBuildStatusFlagOverrideBeatsProjectConfig(t *testing.T) {
+	fake := &fakeQuerier{}
+	var urls []string
+	orig := newStatusClient
+	t.Cleanup(func() { newStatusClient = orig })
+	newStatusClient = func(url string) relayQuerier {
+		urls = append(urls, url)
+		return fake
+	}
+
+	configs := []*config.FleetConfig{
+		{Project: config.ProjectConfig{Name: "a", RelayURL: "http://a.example/mcp"}},
+	}
+	buildStatus([]string{"fleet-a-dev"}, configs, "http://fallback/mcp", "http://override/mcp")
+
+	if len(urls) == 0 {
+		t.Fatal("expected a relay client to be created")
+	}
+	for _, u := range urls {
+		if u != "http://override/mcp" {
+			t.Errorf("--relay-url must beat the project config URL, got client for %q", u)
+		}
 	}
 }
 

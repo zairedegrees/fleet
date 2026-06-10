@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -16,19 +17,40 @@ import (
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
-const defaultRelayURL = "http://localhost:8090/mcp"
+const defaultRelayURL = config.DefaultRelayURL
 
 // loadLastConfig is a seam over config.LoadLast so command behavior around a
 // missing/corrupt last config can be unit-tested.
 var loadLastConfig = config.LoadLast
 
+// Seams over the tmux layer so the kill-all confirmation flow is unit-testable
+// without killing real sessions.
 var (
-	flagLast    bool
-	flagKill    bool
-	flagKillAll bool
-	flagStatus  bool
-	flagDoctor  bool
+	listFleetSessions    = runner.ListFleetSessions
+	killAllFleetSessions = runner.KillAllFleetSessions
 )
+
+var (
+	flagLast     bool
+	flagKill     bool
+	flagKillAll  bool
+	flagStatus   bool
+	flagDoctor   bool
+	flagForce    bool
+	flagRelayURL string
+)
+
+// resolveRelayURL is the single priority chain for relay URL resolution:
+// --relay-url flag > config URL > built-in default.
+func resolveRelayURL(flagURL, configURL string) string {
+	if flagURL != "" {
+		return flagURL
+	}
+	if configURL != "" {
+		return configURL
+	}
+	return defaultRelayURL
+}
 
 func main() {
 	root := &cobra.Command{
@@ -42,6 +64,8 @@ func main() {
 	root.Flags().BoolVar(&flagKillAll, "kill-all", false, "Stop ALL fleet sessions across all projects")
 	root.Flags().BoolVar(&flagStatus, "status", false, "List active fleet sessions")
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
+	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
+	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")
 
 	dispatchCmd := &cobra.Command{
 		Use:   "dispatch [description]",
@@ -76,6 +100,13 @@ func main() {
 	addCmd.MarkFlagRequired("role")
 	root.AddCommand(addCmd)
 
+	usageCmd := &cobra.Command{
+		Use:   "usage",
+		Short: "Show per-project fleet usage (agents, polling, tasks, vault)",
+		RunE:  runUsage,
+	}
+	root.AddCommand(usageCmd)
+
 	stopCmd := &cobra.Command{
 		Use:   "stop <agent>",
 		Short: "Stop a running agent",
@@ -107,7 +138,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run(defaultRelayURL)
+	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""))
 	doctor.Print(checks)
 	return nil
 }
@@ -142,17 +173,37 @@ func runKill() error {
 }
 
 func runKillAll() error {
-	sessions, err := runner.ListFleetSessions()
+	return killAll(os.Stdin, os.Stdout, flagForce)
+}
+
+// killAll stops every fleet session of every project. The blast radius is
+// total, so without --force it requires an explicit y/N confirmation; EOF or
+// anything but y/yes aborts.
+func killAll(in io.Reader, out io.Writer, force bool) error {
+	sessions, err := listFleetSessions()
 	if err != nil {
 		return fmt.Errorf("cannot list tmux sessions: %w", err)
 	}
 	if len(sessions) == 0 {
-		fmt.Println("  No fleet sessions running.")
+		fmt.Fprintln(out, "  No fleet sessions running.")
 		return nil
 	}
-	runner.KillAllFleetSessions()
-	fmt.Printf("  Killed %d fleet session(s) across all projects.\n", len(sessions))
+	if !force {
+		fmt.Fprintf(out, "  Kill %d fleet session(s) across ALL projects? [y/N] ", len(sessions))
+		if !confirmYes(in) {
+			fmt.Fprintln(out, "  Aborted. Use --force to skip this prompt.")
+			return nil
+		}
+	}
+	killAllFleetSessions()
+	fmt.Fprintf(out, "  Killed %d fleet session(s) across all projects.\n", len(sessions))
 	return nil
+}
+
+func confirmYes(in io.Reader) bool {
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
 }
 
 func runDispatch(cmd *cobra.Command, args []string) error {
@@ -164,12 +215,7 @@ func runDispatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no fleet config found. Run 'fleet' first")
 	}
 
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-
-	client := relay.NewClient(relayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL))
 	if err := client.DispatchTask(agent, cfg.Project.Name, description); err != nil {
 		return fmt.Errorf("dispatch failed: %w", err)
 	}
@@ -307,11 +353,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	// Register on the relay (profile + profile_slug) so the agent can actually
 	// receive dispatched tasks — without this it's a ghost in the grid.
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-	client := relay.NewClient(relayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL))
 	if err := client.EnsureProfile(name, role, project); err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ profile registration failed: %v\n", err)
 	}
@@ -344,11 +386,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Deregister from the relay so the agent doesn't linger as a ghost.
-	relayURL := cfg.Project.RelayURL
-	if relayURL == "" {
-		relayURL = defaultRelayURL
-	}
-	if err := relay.NewClient(relayURL).DeactivateAgent(agent, project); err != nil {
+	if err := relay.NewClient(resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)).DeactivateAgent(agent, project); err != nil {
 		fmt.Fprintf(os.Stderr, "  ⚠ Agent stopped but relay deregistration failed: %v\n", err)
 	}
 
@@ -377,9 +415,7 @@ func runLast() error {
 		return runWizard()
 	}
 
-	if cfg.Project.RelayURL == "" {
-		cfg.Project.RelayURL = defaultRelayURL
-	}
+	cfg.Project.RelayURL = resolveRelayURL(flagRelayURL, cfg.Project.RelayURL)
 
 	var agentNames []string
 	for _, a := range cfg.Agents {
@@ -402,7 +438,7 @@ func runLast() error {
 }
 
 func runWizard() error {
-	client := relay.NewClient(defaultRelayURL)
+	client := relay.NewClient(resolveRelayURL(flagRelayURL, ""))
 
 	result, err := wizard.Run(client)
 	if err != nil {
@@ -412,9 +448,7 @@ func runWizard() error {
 		return err
 	}
 
-	if result.Config.Project.RelayURL == "" {
-		result.Config.Project.RelayURL = defaultRelayURL
-	}
+	result.Config.Project.RelayURL = resolveRelayURL(flagRelayURL, result.Config.Project.RelayURL)
 
 	return launch(result.Config, result.Save)
 }

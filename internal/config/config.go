@@ -11,6 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// DefaultRelayURL is the wrai.th relay every component falls back to when no
+// flag or config provides one.
+const DefaultRelayURL = "http://localhost:8090/mcp"
+
 type FleetConfig struct {
 	Project ProjectConfig `toml:"project"`
 	Claude  ClaudeConfig  `toml:"claude"`

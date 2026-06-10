@@ -237,6 +237,112 @@ func TestFollowPaneErasesStaleCharsOnShorterFrame(t *testing.T) {
 	}
 }
 
+// --relay-url must be the highest-priority source, then the config's URL,
+// then the built-in default — the flag was declared since v1.0 but never wired.
+func TestResolveRelayURLPriority(t *testing.T) {
+	if got := resolveRelayURL("http://flag/mcp", "http://cfg/mcp"); got != "http://flag/mcp" {
+		t.Errorf("flag must beat config URL, got %q", got)
+	}
+	if got := resolveRelayURL("", "http://cfg/mcp"); got != "http://cfg/mcp" {
+		t.Errorf("config URL must beat default, got %q", got)
+	}
+	if got := resolveRelayURL("", ""); got != defaultRelayURL {
+		t.Errorf("empty everything must fall back to default, got %q", got)
+	}
+}
+
+func installFakeSessions(t *testing.T, sessions []string) *int {
+	t.Helper()
+	origList, origKill := listFleetSessions, killAllFleetSessions
+	t.Cleanup(func() { listFleetSessions, killAllFleetSessions = origList, origKill })
+	listFleetSessions = func() ([]string, error) { return sessions, nil }
+	kills := 0
+	killAllFleetSessions = func() error { kills++; return nil }
+	return &kills
+}
+
+// --kill-all without --force must ask for y/N confirmation and abort on "n" —
+// it kills every project's sessions, the audit demanded confirm-by-default.
+func TestKillAllPromptsAndAbortsOnNo(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev", "fleet-b-dev"})
+
+	var out bytes.Buffer
+	if err := killAll(strings.NewReader("n\n"), &out, false); err != nil {
+		t.Fatalf("aborting must not be an error, got: %v", err)
+	}
+	if *kills != 0 {
+		t.Error("answering n must not kill anything")
+	}
+	if !strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("expected a y/N prompt, got: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "Aborted") {
+		t.Errorf("expected an explicit abort message, got: %q", out.String())
+	}
+}
+
+func TestKillAllProceedsOnYes(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out bytes.Buffer
+	if err := killAll(strings.NewReader("y\n"), &out, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 1 {
+		t.Error("answering y must kill the sessions")
+	}
+	if !strings.Contains(out.String(), "Killed 1 fleet session(s)") {
+		t.Errorf("expected kill report, got: %q", out.String())
+	}
+}
+
+// EOF / empty answer defaults to No — a closed stdin must never nuke everything.
+func TestKillAllEOFDefaultsToAbort(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 0 {
+		t.Error("EOF on stdin must abort, not kill")
+	}
+}
+
+func TestKillAllForceSkipsPrompt(t *testing.T) {
+	kills := installFakeSessions(t, []string{"fleet-a-dev"})
+
+	var out bytes.Buffer
+	// No stdin available — --force must not read it.
+	if err := killAll(strings.NewReader(""), &out, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 1 {
+		t.Error("--force must kill without confirmation")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("--force must not prompt, got: %q", out.String())
+	}
+}
+
+func TestKillAllNoSessionsNoPrompt(t *testing.T) {
+	kills := installFakeSessions(t, nil)
+
+	var out bytes.Buffer
+	if err := killAll(strings.NewReader(""), &out, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if *kills != 0 {
+		t.Error("nothing to kill must not call the killer")
+	}
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("nothing to kill must not prompt, got: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "No fleet sessions running") {
+		t.Errorf("expected the empty report, got: %q", out.String())
+	}
+}
+
 func TestReportLaunchResultsSilentOnAllSuccess(t *testing.T) {
 	results := []runner.LaunchResult{
 		{Agent: "dev", Success: true, Action: "created"},
