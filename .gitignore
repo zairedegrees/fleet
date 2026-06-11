@@ -11,3 +11,6 @@
 .claude/worktrees/
 *.pid
 *.log
+
+# Internal brainstorming/spec/plan artifacts — never ship to the public repo
+docs/superpowers/
