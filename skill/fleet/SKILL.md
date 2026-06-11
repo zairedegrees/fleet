@@ -70,8 +70,9 @@ Write the same TOML to BOTH `~/.fleet/last.toml` and
 ```
 
 Validation (fleet rejects otherwise):
-- `name` (project and agents) must match `^[a-zA-Z0-9][a-zA-Z0-9_-]*$` — lowercase
-  alphanumerics, hyphens, underscores; no spaces or dots.
+- `name` (project and agents) must match `^[a-zA-Z0-9][a-zA-Z0-9_-]*$` —
+  alphanumerics, hyphens, underscores; no spaces or dots. Prefer lowercase (the
+  relay lowercases agent names).
 - `role` must not contain `"`, `'`, a backtick, `$`, `\`, or newlines/tabs.
 - `color` must be one of: green, orange, blue, red, purple, pink, cyan, yellow.
 
