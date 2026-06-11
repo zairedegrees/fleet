@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/relay"
+	"github.com/zairedegrees/fleet/internal/relaymgr"
 )
 
 // execCommand is the seam tests swap to intercept external probes.
@@ -82,21 +83,30 @@ func checkClaude() Check {
 	return c
 }
 
+// relayCheckFor builds the relay Check from reachability + whether fleet's
+// managed agent-relay binary is present. With a fleet-managed relay the relay is
+// never a blocking prerequisite, so every case is "ok" (valid Status values are
+// "ok"/"missing"/"error") — only the Detail differs.
+func relayCheckFor(reachable, binaryPresent bool) Check {
+	c := Check{Name: "wrai.th relay", Status: "ok"}
+	switch {
+	case reachable:
+		c.Detail = "reachable"
+	case binaryPresent:
+		c.Detail = "managed by fleet (auto-starts on launch)"
+	default:
+		c.Detail = "fleet will download & start it on first launch (with consent)"
+	}
+	return c
+}
+
 func checkRelay(relayURL string) Check {
-	c := Check{Name: "wrai.th relay"}
 	// The /mcp endpoint is an SSE stream: a bare GET never closes the body and
 	// would hang forever. Probe it the way the rest of fleet does instead, with
 	// a bounded JSON-RPC tools/call (Health), so a streaming relay can't block us.
-	client := relay.NewClientWithTimeout(relayURL, 3*time.Second)
-	if err := client.Health(); err != nil {
-		c.Status = "error"
-		c.Detail = "relay not reachable at " + relayURL
-		c.FixCmd = "Start wrai.th relay server"
-		return c
-	}
-	c.Status = "ok"
-	c.Detail = relayURL
-	return c
+	reachable := relay.NewClientWithTimeout(relayURL, 3*time.Second).Health() == nil
+	_, statErr := os.Stat(relaymgr.BinPath())
+	return relayCheckFor(reachable, statErr == nil)
 }
 
 func checkITerm2() Check {

@@ -15,15 +15,14 @@ Run `which fleet`. If it is missing, from the fleet repo build it:
 
 ## 1. Preflight: `fleet --doctor`
 
-Run `fleet --doctor`. It checks tmux, the Claude Code CLI, iTerm2 (optional), and
-the relay, each with an install hint. Resolve missing tools with the hints shown.
+Run `fleet --doctor`. It checks tmux, the Claude Code CLI, and iTerm2 (optional),
+each with an install hint, plus the relay (which fleet manages — see below).
+Resolve missing tools with the hints shown.
 
-The **relay is required** (default `http://localhost:8090/mcp`). If doctor reports
-it unreachable:
-- Explain that fleet needs a running wrai.th relay to coordinate agents.
-- **Ask before installing.** Propose:
-  `curl -fsSL https://raw.githubusercontent.com/Synergix-lab/WRAI.TH/main/install.sh | bash`
-  then `agent-relay serve`. Run it only after the user agrees. Never auto-install.
+The relay is handled by fleet itself — no separate install. On the first launch,
+if no relay is running, fleet asks for consent, then downloads the agent-relay
+binary + the `/relay` skill and starts it locally. You do not run `agent-relay
+serve` by hand. (Point at an existing/shared relay with `fleet --relay-url <url>`.)
 
 ## 2. Understand the project
 

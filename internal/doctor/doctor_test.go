@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,9 +56,19 @@ func TestCheckRelayUnreachable(t *testing.T) {
 	url := srv.URL
 	srv.Close() // nothing listening anymore -> connection refused, fast
 
+	// A fleet-managed relay is never a blocking prerequisite: an unreachable
+	// relay reports "ok" (fleet downloads/starts it on launch), not "error".
 	c := checkRelay(url)
-	if c.Status != "error" {
-		t.Fatalf("expected status error for a down relay, got %q", c.Status)
+	if c.Status != "ok" {
+		t.Fatalf("expected status ok for an unreachable (fleet-managed) relay, got %q", c.Status)
+	}
+}
+
+func TestCheckRelayReportsManagedWhenBinaryPresent(t *testing.T) {
+	// Unreachable but the managed binary exists → "managed by fleet", not a failure.
+	c := relayCheckFor(false /*reachable*/, true /*binaryPresent*/)
+	if c.Status != "ok" || !strings.Contains(c.Detail, "managed") {
+		t.Errorf("expected managed-by-fleet ok, got %+v", c)
 	}
 }
 
@@ -195,8 +206,10 @@ func TestCheckRelayDoesNotHang(t *testing.T) {
 
 	select {
 	case c := <-done:
-		if c.Status != "error" {
-			t.Fatalf("expected error status for an unresponsive relay, got %q", c.Status)
+		// The point of this test is the bounded probe (no hang); a managed
+		// relay that doesn't answer still reports "ok", not a failure.
+		if c.Status != "ok" {
+			t.Fatalf("expected ok status for an unresponsive (fleet-managed) relay, got %q", c.Status)
 		}
 	case <-time.After(8 * time.Second):
 		t.Fatal("checkRelay hung on a non-responding relay (no timeout)")
