@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zairedegrees/fleet/internal/config"
 )
@@ -58,5 +59,39 @@ func Configure(cwd, home string) (applied bool, err error) {
 	if err := mergeStatusLine(local, "node "+installPath()); err != nil {
 		return false, err
 	}
+	if err := ensureGitignore(filepath.Join(cwd, ".claude")); err != nil {
+		return true, err
+	}
 	return true, nil
+}
+
+// ensureGitignore makes sure <claudeDir>/.gitignore ignores the personal files
+// fleet writes there, so a user never accidentally commits a machine-specific
+// status-line path. Appends only the patterns that are missing; never clobbers.
+func ensureGitignore(claudeDir string) error {
+	path := filepath.Join(claudeDir, ".gitignore")
+	want := []string{"settings.local.json", "settings.local.json.bak"}
+	existing := ""
+	if b, err := os.ReadFile(path); err == nil {
+		existing = string(b)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	lines := map[string]bool{}
+	for _, l := range strings.Split(existing, "\n") {
+		lines[strings.TrimSpace(l)] = true
+	}
+	add := ""
+	for _, p := range want {
+		if !lines[p] {
+			add += p + "\n"
+		}
+	}
+	if add == "" {
+		return nil
+	}
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		add = "\n" + add
+	}
+	return os.WriteFile(path, []byte(existing+add), 0644)
 }
