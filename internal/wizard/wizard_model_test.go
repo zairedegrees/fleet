@@ -1,6 +1,7 @@
 package wizard
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -237,5 +238,37 @@ func TestWizardAutoTalkRoundTrip(t *testing.T) {
 	}
 	if !loaded.Agents[0].AutoTalk {
 		t.Error("AutoTalk=true must survive the TOML save/load round-trip")
+	}
+}
+
+// A relay agent whose name/role carries terminal control sequences must be
+// neutralized before it reaches the wizard's rendered items — the relay is
+// untrusted (any agent can register a name).
+func TestWizardSanitizesRelayAgentNames(t *testing.T) {
+	evil := "ghost" + string(rune(0x1b)) + "]0;pwned" + string(rune(0x07))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		inner, _ := json.Marshal(map[string]any{
+			"agents": []relay.Agent{{Name: evil, Role: evil, ProfileSlug: "ghost", Status: "inactive"}},
+		})
+		text, _ := json.Marshal(string(inner))
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":%s}]}}`, text)
+	}))
+	defer srv.Close()
+
+	m := newWizardModel(relay.NewClient(srv.URL))
+	updated, _ := m.Update(ProjectSelectedMsg{Name: "proj", Path: "/tmp"})
+	wm := updated.(wizardModel)
+
+	if len(wm.agents.items) == 0 {
+		t.Fatal("expected the relay agent to be loaded into wizard items")
+	}
+	got := wm.agents.items[0].agent
+	if strings.ContainsRune(got.Name, 0x1b) || strings.ContainsRune(got.Name, 0x07) ||
+		strings.ContainsRune(got.Role, 0x1b) || strings.ContainsRune(got.Role, 0x07) {
+		t.Errorf("wizard kept control chars: name=%q role=%q", got.Name, got.Role)
+	}
+	if !strings.HasPrefix(got.Name, "ghost") {
+		t.Errorf("expected sanitized name preserving printable text, got %q", got.Name)
 	}
 }

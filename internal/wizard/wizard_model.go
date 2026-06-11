@@ -9,6 +9,7 @@ import (
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
 	"github.com/zairedegrees/fleet/internal/scanner"
+	"github.com/zairedegrees/fleet/internal/term"
 )
 
 type wizardModel struct {
@@ -79,7 +80,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.relayClient != nil {
 			relayAgents, err := m.relayClient.ListAgents(cfg.Project.Name)
 			if err != nil {
-				m.status = "relay: " + err.Error()
+				m.status = "relay: " + term.Sanitize(err.Error())
 			} else {
 				seen := make(map[string]bool)
 				for _, item := range items {
@@ -93,8 +94,8 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						items = append(items, agentItem{
 							agent: config.AgentConfig{
-								Name: ra.Name, Color: color, Role: ra.Role,
-								ReportsTo: ra.ReportsTo, IsExecutive: ra.IsExecutive,
+								Name: term.Sanitize(ra.Name), Color: color, Role: term.Sanitize(ra.Role),
+								ReportsTo: term.Sanitize(ra.ReportsTo), IsExecutive: ra.IsExecutive,
 							},
 							enabled: true,
 						})
@@ -125,7 +126,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.relayClient != nil {
 			relayAgents, err := m.relayClient.ListAgents(msg.Name)
 			if err != nil {
-				m.status = "relay: " + err.Error()
+				m.status = "relay: " + term.Sanitize(err.Error())
 			} else if len(relayAgents) > 0 {
 				var items []agentItem
 				for i, ra := range relayAgents {
@@ -135,8 +136,8 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					items = append(items, agentItem{
 						agent: config.AgentConfig{
-							Name: ra.Name, Color: color, Role: ra.Role,
-							ReportsTo: ra.ReportsTo, IsExecutive: ra.IsExecutive,
+							Name: term.Sanitize(ra.Name), Color: color, Role: term.Sanitize(ra.Role),
+							ReportsTo: term.Sanitize(ra.ReportsTo), IsExecutive: ra.IsExecutive,
 						},
 						enabled: true,
 					})
@@ -158,7 +159,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if path != "" {
 				result, err := scanner.Scan(path)
 				if err != nil {
-					m.status = "scan: " + err.Error()
+					m.status = "scan: " + term.Sanitize(err.Error())
 				} else {
 					suggestions := scanner.SuggestAgents(result)
 					var items []agentItem
