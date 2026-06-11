@@ -1,6 +1,18 @@
 package relaymgr
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"syscall"
+	"testing"
+
+	"github.com/zairedegrees/fleet/internal/config"
+)
+
+// errUnreachable is a test sentinel for probe stubs (production builds its own
+// errors with context).
+var errUnreachable = errors.New("relay unreachable")
 
 func TestEnsureRunningReachableIsNoop(t *testing.T) {
 	probe = func(string) error { return nil }
@@ -65,5 +77,44 @@ func TestPortFromURL(t *testing.T) {
 		if got := portFromURL(c.in); got != c.want {
 			t.Errorf("portFromURL(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestStopOnlySignalsAgentRelay(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(config.FleetDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	pidFile := filepath.Join(config.FleetDir(), "relay.pid")
+
+	cases := []struct {
+		name     string
+		cmdline  string
+		wantKill bool
+	}{
+		{"is agent-relay", "/Users/x/.fleet/bin/agent-relay serve", true},
+		{"recycled pid", "vim notes.txt", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			os.WriteFile(pidFile, []byte("4242"), 0644)
+			procCommand = func(int) string { return c.cmdline }
+			killed := -1
+			killProc = func(pid int, _ syscall.Signal) error { killed = pid; return nil }
+			defer func() { procCommand = defaultProcCommand; killProc = syscall.Kill }()
+
+			if err := Stop(); err != nil {
+				t.Fatalf("Stop: %v", err)
+			}
+			if c.wantKill && killed != 4242 {
+				t.Errorf("expected SIGTERM to pid 4242, got %d", killed)
+			}
+			if !c.wantKill && killed != -1 {
+				t.Errorf("must not signal a recycled pid, killed %d", killed)
+			}
+			if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+				t.Error("pidfile should be removed after Stop")
+			}
+		})
 	}
 }
