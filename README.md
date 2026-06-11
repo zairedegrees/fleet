@@ -50,6 +50,16 @@ cd fleet
 go build -o fleet ./cmd/fleet
 ```
 
+### Onboarding skill
+
+If you use Claude Code, install the bundled `/fleet` skill — it drives the whole first-run setup (prerequisites, relay, a tailored team, launch):
+
+```bash
+ln -s "$(pwd)/skill/fleet" ~/.claude/skills/fleet
+```
+
+Then in Claude Code say "set up fleet for this project" (or `/fleet`) and it walks you from zero to a running, registered fleet.
+
 ## Requirements
 
 Run `fleet --doctor` to verify and get install hints.
