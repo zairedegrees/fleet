@@ -26,9 +26,11 @@ func installLaunchSeams(t *testing.T) *launchSeams {
 	s := &launchSeams{}
 	origSave, origCreate, origGrid, origConfigure, origList :=
 		saveConfigAsLast, createSessions, openITerm2Grid, configureAgentsAsync, listFleetSessions
+	origEnsureDash, origConfigureDash := ensureDashboard, configureDashboard
 	t.Cleanup(func() {
 		saveConfigAsLast, createSessions, openITerm2Grid, configureAgentsAsync, listFleetSessions =
 			origSave, origCreate, origGrid, origConfigure, origList
+		ensureDashboard, configureDashboard = origEnsureDash, origConfigureDash
 	})
 	saveConfigAsLast = func(cfg *config.FleetConfig) error {
 		s.savedURL = cfg.Project.RelayURL
@@ -47,6 +49,8 @@ func installLaunchSeams(t *testing.T) *launchSeams {
 		return "", nil
 	}
 	listFleetSessions = func() ([]string, error) { return nil, nil }
+	ensureDashboard = func() (string, error) { return "", nil }
+	configureDashboard = func(string, string) (bool, error) { return false, nil }
 	return s
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/dashboard"
 	"github.com/zairedegrees/fleet/internal/doctor"
 	"github.com/zairedegrees/fleet/internal/relay"
 	"github.com/zairedegrees/fleet/internal/runner"
@@ -38,6 +39,8 @@ var (
 	createSessions       = runner.CreateSessions
 	openITerm2Grid       = runner.OpenITerm2Grid
 	configureAgentsAsync = runner.ConfigureAgentsAsync
+	ensureDashboard      = dashboard.EnsureInstalled
+	configureDashboard   = dashboard.Configure
 )
 
 var (
@@ -506,6 +509,15 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	}
 	if err := runner.ProvisionMCP(cfg.Project.Cwd, relayURL); err != nil {
 		fmt.Printf("  ⚠ Could not provision .mcp.json: %v\n", err)
+	}
+	if home, err := os.UserHomeDir(); err != nil {
+		fmt.Printf("  ⚠ Could not set up the dashboard status line: %v\n", err)
+	} else if _, err := ensureDashboard(); err != nil {
+		fmt.Printf("  ⚠ Could not install the dashboard: %v\n", err)
+	} else if applied, err := configureDashboard(cfg.Project.Cwd, home); err != nil {
+		fmt.Printf("  ⚠ Could not configure the dashboard: %v\n", err)
+	} else if applied {
+		fmt.Println("  ✓ Bundled dashboard status line enabled for this fleet's agents")
 	}
 
 	// Preflight: fail early on a broken/absent tmux rather than per-agent later.

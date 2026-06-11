@@ -117,6 +117,7 @@ internal/relay       wrai.th MCP HTTP client (list, dispatch, profiles, vault)
 internal/config      TOML config, validation, last-run persistence
 internal/doctor      prerequisite checks with install hints
 internal/term        sanitizes relay-sourced strings before terminal output
+internal/dashboard   embeds + configures the bundled per-agent status line
 ```
 
 Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side by side. Config lives in `~/.fleet/configs/<project>.toml`.
@@ -126,6 +127,7 @@ Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side 
 Recommended (defense-in-depth, not required): run the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) relay with **preserve-omitted re-registration**, so even an accidental bare re-register keeps the existing `profile_slug` instead of clearing it.
 
 Built with [Cobra](https://github.com/spf13/cobra) and [Charm Bubble Tea](https://github.com/charmbracelet/bubbletea).
+Each agent pane shows a rich status line (context, cost, rate limits) via the bundled [claude-dashboard](https://github.com/uppinote20/claude-dashboard) (MIT, © uppinote) — enabled automatically only when you don't already have your own status line.
 
 ## Configuration
 
