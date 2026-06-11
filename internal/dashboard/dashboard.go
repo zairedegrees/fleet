@@ -36,3 +36,27 @@ func EnsureInstalled() (string, error) {
 	}
 	return path, nil
 }
+
+// Configure gives the agents in cwd the bundled status line — but only as a
+// fallback: if the user already defines a statusLine globally
+// (~/.claude/settings.json), per-project (<cwd>/.claude/settings.json) or
+// per-project-local (<cwd>/.claude/settings.local.json), it leaves everything
+// untouched and returns applied=false. Otherwise it merges the bundled command
+// into <cwd>/.claude/settings.local.json (gitignored, non-destructive).
+func Configure(cwd, home string) (applied bool, err error) {
+	candidates := []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(cwd, ".claude", "settings.json"),
+		filepath.Join(cwd, ".claude", "settings.local.json"),
+	}
+	for _, p := range candidates {
+		if hasStatusLine(p) {
+			return false, nil
+		}
+	}
+	local := filepath.Join(cwd, ".claude", "settings.local.json")
+	if err := mergeStatusLine(local, "node "+installPath()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
