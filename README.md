@@ -61,6 +61,19 @@ Run `fleet --doctor` to verify and get install hints.
 | iTerm2 | grid layout (optional, falls back to tmux) | `brew install --cask iterm2` |
 | wrai.th relay | agent registry, profiles, task dispatch | running at `http://localhost:8090/mcp` |
 
+### Setting up the relay
+
+fleet coordinates agents through a [wrai.th](https://github.com/Synergix-lab/WRAI.TH) MCP relay — it is the one prerequisite that must be **running** before you launch a fleet. Install and start it with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Synergix-lab/WRAI.TH/main/install.sh | bash
+agent-relay serve            # listens on http://localhost:8090/mcp by default
+```
+
+Point fleet elsewhere with `fleet --relay-url <url>` (per invocation) or the wizard's Relay URL field (saved per project). Verify the connection with `fleet --doctor`.
+
+> **Recommended:** a relay build with *preserve-omitted re-registration* (it keeps an agent's `profile_slug` when the agent re-registers without it). fleet works against any relay — it registers agents server-side and never self-registers destructively — but on an older relay an agent that re-registers on its own could drop its slug and stop receiving dispatched tasks. Newer relays close that edge.
+
 ## Usage
 
 ```bash
