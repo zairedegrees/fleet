@@ -65,13 +65,13 @@ func TestResolveSessionDashNamedAgent(t *testing.T) {
 	}
 }
 
-// P1-A: dot-projects are sanitized one-way for tmux (v1stud.io → v1stud-io),
+// P1-A: dot-projects are sanitized one-way for tmux (acme.io → acme-io),
 // so the resolver must map the session back to the REAL project name — that is
 // the name the relay was registered with.
 func TestResolveSessionDotProject(t *testing.T) {
-	project, agent, known := resolveSession("fleet-v1stud-io-dev", []string{"v1stud.io"})
-	if !known || project != "v1stud.io" || agent != "dev" {
-		t.Errorf("expected v1stud.io/dev (known), got %s/%s known=%v", project, agent, known)
+	project, agent, known := resolveSession("fleet-acme-io-dev", []string{"acme.io"})
+	if !known || project != "acme.io" || agent != "dev" {
+		t.Errorf("expected acme.io/dev (known), got %s/%s known=%v", project, agent, known)
 	}
 }
 
@@ -128,20 +128,20 @@ func TestBuildStatusDashAgentResolvesAgainstKnownProject(t *testing.T) {
 // uses the raw project name), and the group label stays the real name too.
 func TestBuildStatusDotProjectQueriesRealName(t *testing.T) {
 	fake := &fakeQuerier{
-		agents: map[string][]relay.Agent{"v1stud.io": {{Name: "dev", Status: "active"}}},
-		counts: map[string]int{"v1stud.io/dev": 2},
+		agents: map[string][]relay.Agent{"acme.io": {{Name: "dev", Status: "active"}}},
+		counts: map[string]int{"acme.io/dev": 2},
 	}
 	installFakeRelay(t, fake)
 
-	projects, _ := buildStatus([]string{"fleet-v1stud-io-dev"}, projectConfigs("v1stud.io"), defaultRelayURL, "")
-	if len(projects) != 1 || projects[0].Project != "v1stud.io" {
-		t.Fatalf("expected project group v1stud.io, got %+v", projects)
+	projects, _ := buildStatus([]string{"fleet-acme-io-dev"}, projectConfigs("acme.io"), defaultRelayURL, "")
+	if len(projects) != 1 || projects[0].Project != "acme.io" {
+		t.Fatalf("expected project group acme.io, got %+v", projects)
 	}
 	a := projects[0].Agents[0]
 	if a.Agent != "dev" || a.RelayState != "active" || a.Tasks != 2 {
 		t.Errorf("expected dev with relay state + count, got %+v", a)
 	}
-	if len(fake.listCalls) == 0 || fake.listCalls[0] != "v1stud.io" {
+	if len(fake.listCalls) == 0 || fake.listCalls[0] != "acme.io" {
 		t.Errorf("relay must be queried with the real project name, got %v", fake.listCalls)
 	}
 }

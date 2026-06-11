@@ -148,7 +148,7 @@ func TestValidate(t *testing.T) {
 			name: "real french role with em-dash and ampersand is allowed",
 			cfg: FleetConfig{
 				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
-				Agents:  []AgentConfig{{Name: "nazaire", Color: "green", Role: "Executive — project owner, strategy & architecture decisions"}},
+				Agents:  []AgentConfig{{Name: "lead", Color: "green", Role: "Executive — project owner, strategy & architecture decisions"}},
 			},
 			wantErr: "",
 		},
@@ -156,7 +156,7 @@ func TestValidate(t *testing.T) {
 			name: "role with accents is allowed",
 			cfg: FleetConfig{
 				Project: ProjectConfig{Name: "proj", Cwd: "/tmp"},
-				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Développeur généraliste bot météo Polymarket"}},
+				Agents:  []AgentConfig{{Name: "dev", Color: "green", Role: "Développeur généraliste back-end"}},
 			},
 			wantErr: "",
 		},

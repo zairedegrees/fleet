@@ -295,7 +295,7 @@ func agentLine(a agentStatus) string {
 
 // resolveSession matches a fleet session against the known project names: the
 // longest "fleet-<sanitizedProject>-" prefix wins, so dash-named agents
-// (ux-designer) and dot-projects (v1stud.io → v1stud-io in tmux) resolve to
+// (ux-designer) and dot-projects (acme.io → acme-io in tmux) resolve to
 // the REAL project name the relay was registered with. Sessions matching no
 // known project fall back to the last-dash guess with known=false.
 func resolveSession(session string, projects []string) (project, agent string, known bool) {
