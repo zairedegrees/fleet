@@ -126,6 +126,8 @@ func main() {
 	}
 	root.AddCommand(stopCmd)
 
+	root.AddCommand(newRelayCmd())
+
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -498,11 +500,12 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return err
 	}
 
-	relayClient := relay.NewClient(relayURL)
-	if err := relayClient.Health(); err != nil {
-		fmt.Printf("  ✗ Relay unreachable at %s\n", relayURL)
-		fmt.Println("    Run 'fleet --doctor' to check prerequisites.")
-		return fmt.Errorf("relay health check failed: %w", err)
+	if err := ensureRelaySetup(relayURL, flagRelayURL != ""); err != nil {
+		fmt.Printf("  ✗ %v\n", err)
+		return err
+	}
+	if err := runner.ProvisionMCP(cfg.Project.Cwd, relayURL); err != nil {
+		fmt.Printf("  ⚠ Could not provision .mcp.json: %v\n", err)
 	}
 
 	// Preflight: fail early on a broken/absent tmux rather than per-agent later.
