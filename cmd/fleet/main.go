@@ -39,6 +39,8 @@ var (
 	createSessions       = runner.CreateSessions
 	openITerm2Grid       = runner.OpenITerm2Grid
 	configureAgentsAsync = runner.ConfigureAgentsAsync
+	ensureDashboard      = dashboard.EnsureInstalled
+	configureDashboard   = dashboard.Configure
 )
 
 var (
@@ -510,9 +512,9 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	}
 	if home, err := os.UserHomeDir(); err != nil {
 		fmt.Printf("  ⚠ Could not set up the dashboard status line: %v\n", err)
-	} else if _, err := dashboard.EnsureInstalled(); err != nil {
+	} else if _, err := ensureDashboard(); err != nil {
 		fmt.Printf("  ⚠ Could not install the dashboard: %v\n", err)
-	} else if applied, err := dashboard.Configure(cfg.Project.Cwd, home); err != nil {
+	} else if applied, err := configureDashboard(cfg.Project.Cwd, home); err != nil {
 		fmt.Printf("  ⚠ Could not configure the dashboard: %v\n", err)
 	} else if applied {
 		fmt.Println("  ✓ Bundled dashboard status line enabled for this fleet's agents")
