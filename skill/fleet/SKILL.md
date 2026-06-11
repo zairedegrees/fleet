@@ -44,8 +44,18 @@ Rules:
 
 ## 4. Author the config
 
-Write the same TOML to BOTH `~/.fleet/last.toml` and
-`~/.fleet/configs/<project>.toml`:
+Write the TOML to `~/.fleet/configs/<project>.toml`, then point `last.toml` at it
+so `fleet --last` picks it up:
+
+```bash
+ln -sf ~/.fleet/configs/<project>.toml ~/.fleet/last.toml
+```
+
+Use `ln -sf` (fleet keeps `last.toml` as a symlink) — do NOT write the config
+straight into `~/.fleet/last.toml`, because if it is already a symlink to another
+project you would overwrite that project's config.
+
+The config:
 
 ```toml
 [project]
