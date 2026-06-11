@@ -1,5 +1,9 @@
 # fleet
 
+[![CI](https://github.com/zairedegrees/fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/zairedegrees/fleet/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zairedegrees/fleet.svg)](https://pkg.go.dev/github.com/zairedegrees/fleet)
+[![Release](https://img.shields.io/github/v/release/zairedegrees/fleet)](https://github.com/zairedegrees/fleet/releases)
+
 **Launch and orchestrate multi-agent Claude Code fleets from one command.**
 
 `fleet` is a Go CLI and TUI that spins up a team of Claude Code agents, each in its own tmux session, lays them out in an iTerm2 grid, and coordinates them through the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) MCP relay. One operator drives many agents: dispatch a task to any agent, stream its terminal, add or stop workers on the fly.
