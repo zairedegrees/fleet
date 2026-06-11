@@ -117,6 +117,7 @@ internal/relay       wrai.th MCP HTTP client (list, dispatch, profiles, vault)
 internal/config      TOML config, validation, last-run persistence
 internal/doctor      prerequisite checks with install hints
 internal/term        sanitizes relay-sourced strings before terminal output
+internal/dashboard   embeds + configures the bundled per-agent status line
 ```
 
 Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side by side. Config lives in `~/.fleet/configs/<project>.toml`.
