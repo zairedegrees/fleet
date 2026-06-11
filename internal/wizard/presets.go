@@ -104,8 +104,8 @@ func AllPresets() []Preset {
 			},
 		},
 		{
-			Name: "Custom",
-			Icon: "🔧",
+			Name:   "Custom",
+			Icon:   "🔧",
 			Agents: []config.AgentConfig{},
 		},
 	}

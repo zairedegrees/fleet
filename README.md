@@ -2,7 +2,7 @@
 
 **Launch and orchestrate multi-agent Claude Code fleets from one command.**
 
-`fleet` is a Go CLI and TUI that spins up a team of Claude Code agents, each in its own tmux session, lays them out in an iTerm2 grid, and coordinates them through the [wrai.th](https://wrai.th) MCP relay. One operator drives many agents: dispatch a task to any agent, stream its terminal, add or stop workers on the fly.
+`fleet` is a Go CLI and TUI that spins up a team of Claude Code agents, each in its own tmux session, lays them out in an iTerm2 grid, and coordinates them through the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) MCP relay. One operator drives many agents: dispatch a task to any agent, stream its terminal, add or stop workers on the fly.
 
 ![An eight-agent fleet in an iTerm2 grid, each Claude Code agent color-coded by role](docs/fleet-grid.png)
 
@@ -104,20 +104,22 @@ fleet stop <agent>                     # graceful /exit, then kill if needed
 ## Architecture
 
 ```
-cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, lifecycle flags
+cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, relay, lifecycle flags
 internal/wizard      Bubble Tea TUI: project panel, agent panel, presets, drawer
 internal/scanner     tech-stack detection, agent suggestions
-internal/runner      tmux session management, iTerm2 grid, async agent configuration
+internal/runner      tmux sessions, iTerm2 grid, async agent config, .mcp.json provisioning
+internal/relaymgr    downloads, starts, and lifecycle-manages the bundled relay
 internal/relay       wrai.th MCP HTTP client (list, dispatch, profiles, vault)
 internal/config      TOML config, validation, last-run persistence
 internal/doctor      prerequisite checks with install hints
+internal/term        sanitizes relay-sourced strings before terminal output
 ```
 
 Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side by side. Config lives in `~/.fleet/configs/<project>.toml`.
 
 **Registration is server-side, never in-pane.** At launch fleet registers every agent on the relay with its full identity (role, `profile_slug`, reporting line) over HTTP — `profile_slug` is what routes dispatched tasks. Agents are never told to `/relay register` themselves, because a bare self-register omits `profile_slug` and an older relay's full-replace UPDATE would NULL it, silently breaking task routing. Instead, identity rides along with each wake: just before `/relay talk`, fleet sends the agent a one-line preamble stating who it is and instructing it not to call `register_agent`. Task routing therefore works against any relay version.
 
-Recommended (defense-in-depth, not required): run the [wrai.th](https://wrai.th) relay with **preserve-omitted re-registration**, so even an accidental bare re-register keeps the existing `profile_slug` instead of clearing it.
+Recommended (defense-in-depth, not required): run the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) relay with **preserve-omitted re-registration**, so even an accidental bare re-register keeps the existing `profile_slug` instead of clearing it.
 
 Built with [Cobra](https://github.com/spf13/cobra) and [Charm Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
