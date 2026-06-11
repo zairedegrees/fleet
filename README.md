@@ -126,6 +126,7 @@ Sessions are named `fleet-<project>-<agent>`, so multiple projects can run side 
 Recommended (defense-in-depth, not required): run the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) relay with **preserve-omitted re-registration**, so even an accidental bare re-register keeps the existing `profile_slug` instead of clearing it.
 
 Built with [Cobra](https://github.com/spf13/cobra) and [Charm Bubble Tea](https://github.com/charmbracelet/bubbletea).
+Each agent pane shows a rich status line (context, cost, rate limits) via the bundled [claude-dashboard](https://github.com/uppinote20/claude-dashboard) (MIT, © uppinote) — enabled automatically only when you don't already have your own status line.
 
 ## Configuration
 
