@@ -9,6 +9,7 @@ import (
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
 	"github.com/zairedegrees/fleet/internal/runner"
+	"github.com/zairedegrees/fleet/internal/term"
 )
 
 // relayStateUnknown marks a session that matched no known project name: its
@@ -255,11 +256,11 @@ func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, t
 func renderStatus(projects []projectStatus, sessionCount int, relayWarning string) string {
 	var b strings.Builder
 	if relayWarning != "" {
-		fmt.Fprintf(&b, "  ⚠ %s\n\n", relayWarning)
+		fmt.Fprintf(&b, "  ⚠ %s\n\n", term.Sanitize(relayWarning))
 	}
 	fmt.Fprintf(&b, "  %d fleet session(s):\n\n", sessionCount)
 	for _, p := range projects {
-		fmt.Fprintf(&b, "    [%s]\n", p.Project)
+		fmt.Fprintf(&b, "    [%s]\n", term.Sanitize(p.Project))
 		for _, a := range p.Agents {
 			fmt.Fprintf(&b, "      %s\n", agentLine(a))
 		}
@@ -273,6 +274,7 @@ func agentLine(a agentStatus) string {
 	if label == "" {
 		label = a.Agent
 	}
+	label = term.Sanitize(label)
 	var parts []string
 	if a.RelayState != "" {
 		parts = append(parts, "relay: "+a.RelayState)

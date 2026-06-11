@@ -9,6 +9,7 @@ import (
 
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
+	"github.com/zairedegrees/fleet/internal/term"
 )
 
 // projectUsage is the per-project view rendered by `fleet usage`. Every number
@@ -153,7 +154,7 @@ func renderUsage(projects []projectUsage) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %d project(s):\n\n", len(projects))
 	for _, p := range projects {
-		fmt.Fprintf(&b, "    [%s]  relay: %s\n", p.Project, p.RelayURL)
+		fmt.Fprintf(&b, "    [%s]  relay: %s\n", term.Sanitize(p.Project), term.Sanitize(p.RelayURL))
 		fmt.Fprintf(&b, "      agents (config): %d declared — %d polling (auto_talk), %d idle  [config]\n",
 			p.Agents, p.Polling, p.Agents-p.Polling)
 		// Keyed on the -1 sentinel, not the warning text — an unknown count
@@ -161,7 +162,7 @@ func renderUsage(projects []projectUsage) string {
 		if p.Registered < 0 || p.Active < 0 {
 			b.WriteString("      live (relay):    ?")
 			if p.RelayWarning != "" {
-				fmt.Fprintf(&b, "  ⚠ %s", p.RelayWarning)
+				fmt.Fprintf(&b, "  ⚠ %s", term.Sanitize(p.RelayWarning))
 			}
 			b.WriteString("\n")
 		} else {
