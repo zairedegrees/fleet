@@ -1,7 +1,6 @@
 package relaymgr
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,13 +9,24 @@ import (
 	"time"
 )
 
-var errUnreachable = errors.New("relay unreachable")
-
 // seams
 var (
 	startServer = defaultStartServer
 	ensureBin   = EnsureBinary
+	killProc    = syscall.Kill
+	procCommand = defaultProcCommand
 )
+
+// defaultProcCommand returns the full command line of a running pid (empty when
+// the pid is gone). Cross-platform via ps, used to confirm a pidfile still points
+// at agent-relay before signalling it.
+func defaultProcCommand(pid int) string {
+	out, err := runCmd("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // EnsureRunning guarantees a relay answers at url. If one is already reachable it
 // returns immediately (a real wrai.th or an already-managed instance). Otherwise,
@@ -85,7 +95,11 @@ func Stop() error {
 	if err != nil {
 		return err
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	// Only signal the pid if it still points at agent-relay — a stale pidfile
+	// whose pid was recycled by the OS must not get an unrelated process killed.
+	if strings.Contains(procCommand(pid), "agent-relay") {
+		_ = killProc(pid, syscall.SIGTERM)
+	}
 	return os.Remove(pidPath())
 }
 

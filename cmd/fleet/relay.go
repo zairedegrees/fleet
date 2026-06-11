@@ -63,7 +63,15 @@ func newRelayCmd() *cobra.Command {
 		Short: "Download (first time) and start the managed relay",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			url := resolveRelayURL(flagRelayURL, "")
-			return ensureRelaySetup(url, flagRelayURL != "")
+			if relaymgr.Reachable(url) {
+				fmt.Printf("  ✓ relay already running at %s\n", url)
+				return nil
+			}
+			if err := ensureRelaySetup(url, flagRelayURL != ""); err != nil {
+				return err
+			}
+			fmt.Printf("  ✓ relay started at %s\n", url)
+			return nil
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
