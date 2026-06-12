@@ -14,8 +14,9 @@ import (
 // its value at save time vs at configure time — the persisted/runtime split
 // the --relay-url override must respect.
 type launchSeams struct {
-	savedURL      string
-	configuredURL string
+	savedURL       string
+	configuredURL  string
+	permissionsCwd string
 }
 
 // installLaunchSeams stubs every launch side effect (config persistence, tmux
@@ -27,10 +28,12 @@ func installLaunchSeams(t *testing.T) *launchSeams {
 	origSave, origCreate, origGrid, origConfigure, origList :=
 		saveConfigAsLast, createSessions, openITerm2Grid, configureAgentsAsync, listFleetSessions
 	origEnsureDash, origConfigureDash := ensureDashboard, configureDashboard
+	origProvPerms := provisionPermissions
 	t.Cleanup(func() {
 		saveConfigAsLast, createSessions, openITerm2Grid, configureAgentsAsync, listFleetSessions =
 			origSave, origCreate, origGrid, origConfigure, origList
 		ensureDashboard, configureDashboard = origEnsureDash, origConfigureDash
+		provisionPermissions = origProvPerms
 	})
 	saveConfigAsLast = func(cfg *config.FleetConfig) error {
 		s.savedURL = cfg.Project.RelayURL
@@ -51,6 +54,7 @@ func installLaunchSeams(t *testing.T) *launchSeams {
 	listFleetSessions = func() ([]string, error) { return nil, nil }
 	ensureDashboard = func() (string, error) { return "", nil }
 	configureDashboard = func(string, string) (bool, error) { return false, nil }
+	provisionPermissions = func(cwd string) error { s.permissionsCwd = cwd; return nil }
 	return s
 }
 
@@ -149,6 +153,40 @@ func TestLaunchEmptyConfigURLPersistsDefaultNotOverride(t *testing.T) {
 	}
 	if seams.configuredURL != override.URL {
 		t.Errorf("runtime must still use the override %q, got %q", override.URL, seams.configuredURL)
+	}
+}
+
+// launch must provision the scoped relay allowlist for the project cwd so woken
+// agents run the relay lifecycle without a permission prompt.
+func TestLaunchProvisionsRelayPermissions(t *testing.T) {
+	seams := installLaunchSeams(t)
+	var hits int
+	relaySrv := fakeRelay(t, &hits)
+	setFlagRelayURL(t, "")
+
+	cfg := launchConfig(relaySrv.URL)
+	cfg.Project.Cwd = t.TempDir()
+	if err := launch(cfg, false); err != nil {
+		t.Fatalf("launch failed: %v", err)
+	}
+	if seams.permissionsCwd != cfg.Project.Cwd {
+		t.Errorf("launch must provision relay permissions for the project cwd %q, got %q", cfg.Project.Cwd, seams.permissionsCwd)
+	}
+}
+
+// A permission-provisioning failure is a warning, not a launch abort — the
+// fleet still comes up (the allowlist is a convenience, not a hard dependency).
+func TestLaunchToleratesPermissionProvisionError(t *testing.T) {
+	installLaunchSeams(t)
+	var hits int
+	relaySrv := fakeRelay(t, &hits)
+	setFlagRelayURL(t, "")
+	provisionPermissions = func(cwd string) error { return fmt.Errorf("disk full") }
+
+	cfg := launchConfig(relaySrv.URL)
+	cfg.Project.Cwd = t.TempDir()
+	if err := launch(cfg, false); err != nil {
+		t.Errorf("a permission-provision error must not fail the launch, got %v", err)
 	}
 }
 
