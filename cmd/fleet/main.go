@@ -39,6 +39,7 @@ var (
 	createSessions       = runner.CreateSessions
 	openITerm2Grid       = runner.OpenITerm2Grid
 	configureAgentsAsync = runner.ConfigureAgentsAsync
+	provisionPermissions = runner.ProvisionRelayPermissions
 	ensureDashboard      = dashboard.EnsureInstalled
 	configureDashboard   = dashboard.Configure
 )
@@ -509,6 +510,9 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	}
 	if err := runner.ProvisionMCP(cfg.Project.Cwd, relayURL); err != nil {
 		fmt.Printf("  ⚠ Could not provision .mcp.json: %v\n", err)
+	}
+	if err := provisionPermissions(cfg.Project.Cwd); err != nil {
+		fmt.Printf("  ⚠ Could not provision relay permissions: %v\n", err)
 	}
 	if home, err := os.UserHomeDir(); err != nil {
 		fmt.Printf("  ⚠ Could not set up the dashboard status line: %v\n", err)

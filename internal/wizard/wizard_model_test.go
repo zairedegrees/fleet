@@ -241,6 +241,94 @@ func TestWizardAutoTalkRoundTrip(t *testing.T) {
 	}
 }
 
+// P on the agents panel toggles fleet-wide skip-all autonomy; off by default.
+func TestWizardAutonomyToggle(t *testing.T) {
+	m := newWizardModel(nil)
+	m.activePanel = panelRight
+	if m.skipPerms {
+		t.Fatal("autonomy must be OFF by default")
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	wm := updated.(wizardModel)
+	if !wm.skipPerms {
+		t.Fatal("P must toggle skip-all autonomy ON")
+	}
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	wm = updated.(wizardModel)
+	if wm.skipPerms {
+		t.Fatal("P must toggle skip-all autonomy back OFF")
+	}
+}
+
+// Skip-all OFF → no claude flags; ON → --dangerously-skip-permissions, and it
+// survives the TOML round-trip so --last relaunches with the same posture.
+func TestWizardAutonomyFlagsInResult(t *testing.T) {
+	build := func(skip bool) *config.FleetConfig {
+		m := newWizardModel(nil)
+		m.agents.SetAgents([]agentItem{
+			{agent: config.AgentConfig{Name: "dev", Color: "green", Role: "Lead"}, enabled: true},
+		})
+		m.project.projName = "p"
+		m.project.pathInput.SetValue("/tmp")
+		m.skipPerms = skip
+		m.launching = true
+		res := m.Result()
+		if res == nil {
+			t.Fatal("expected a wizard result")
+		}
+		return res.Config
+	}
+
+	if flags := build(false).Claude.Flags; len(flags) != 0 {
+		t.Errorf("autonomy OFF must leave claude flags empty, got %v", flags)
+	}
+
+	cfg := build(true)
+	if len(cfg.Claude.Flags) != 1 || cfg.Claude.Flags[0] != "--dangerously-skip-permissions" {
+		t.Fatalf("autonomy ON must set the skip-permissions flag, got %v", cfg.Claude.Flags)
+	}
+
+	path := filepath.Join(t.TempDir(), "autonomy.toml")
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(loaded.Claude.Flags) != 1 || loaded.Claude.Flags[0] != "--dangerously-skip-permissions" {
+		t.Errorf("skip-permissions flag must survive the TOML round-trip, got %v", loaded.Claude.Flags)
+	}
+}
+
+// P must not toggle autonomy while a text input has focus — it's a plain
+// character typed into the path/relay field, not a shortcut.
+func TestWizardAutonomyNotToggledInTextInput(t *testing.T) {
+	m := newWizardModel(nil)
+	m.activePanel = panelLeft
+	m.project.focus = focusPath
+	m.project.pathInput.Focus()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	wm := updated.(wizardModel)
+	if wm.skipPerms {
+		t.Error("P typed into the path field must not toggle autonomy")
+	}
+}
+
+// The autonomy posture is visible in the rendered view.
+func TestWizardViewShowsAutonomy(t *testing.T) {
+	m := newWizardModel(nil)
+	m.activePanel = panelRight
+	if !strings.Contains(m.View(), "Autonomy") {
+		t.Errorf("View must show the autonomy posture; got:\n%s", m.View())
+	}
+	m.skipPerms = true
+	if !strings.Contains(m.View(), "SKIP-ALL") {
+		t.Errorf("View must flag SKIP-ALL when autonomy is on; got:\n%s", m.View())
+	}
+}
+
 // A relay agent whose name/role carries terminal control sequences must be
 // neutralized before it reaches the wizard's rendered items — the relay is
 // untrusted (any agent can register a name).
