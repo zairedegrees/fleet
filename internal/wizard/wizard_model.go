@@ -25,6 +25,7 @@ type wizardModel struct {
 	width       int
 	height      int
 	status      string // surfaced relay/scan failure, shown in View
+	skipPerms   bool   // fleet-wide --dangerously-skip-permissions, toggled with P
 
 	// Result
 	quitting  bool
@@ -270,6 +271,13 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Quit
 					}
 				}
+			case "P":
+				// Toggle fleet-wide full autonomy. Agents panel only — it's the
+				// finalize screen before launch; the flag applies to the whole fleet.
+				if m.activePanel == panelRight {
+					m.skipPerms = !m.skipPerms
+					return m, nil
+				}
 			}
 		}
 	}
@@ -314,6 +322,14 @@ func (m wizardModel) View() string {
 	sb.WriteString(content)
 	sb.WriteString("\n")
 
+	// Autonomy posture — fleet-wide permission stance, toggled with P.
+	if m.skipPerms {
+		autonomyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+		sb.WriteString(autonomyStyle.Render("  ⚠ Autonomy: SKIP-ALL — agents skip every permission prompt") + "\n")
+	} else {
+		sb.WriteString(dimStyle.Render("  Autonomy: prompts  (P: skip all permissions)") + "\n")
+	}
+
 	// Status / error line — surfaces relay/scan failures that were swallowed.
 	if m.status != "" {
 		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
@@ -333,7 +349,7 @@ func (m wizardModel) View() string {
 	} else if m.activePanel == panelLeft {
 		help = "j/k=move  enter=select preset  esc=relay URL  tab=agents panel  q=quit"
 	} else {
-		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  enter=launch  s=save+launch  tab=presets  q=quit"
+		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  P=autonomy  enter=launch  s=save+launch  tab=presets  q=quit"
 	}
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	sb.WriteString(helpStyle.Render("  " + help))
@@ -359,6 +375,10 @@ func (m wizardModel) Result() *WizardResult {
 			Cwd:      m.project.ProjectPath(),
 		},
 		Agents: agents,
+	}
+
+	if m.skipPerms {
+		cfg.Claude.Flags = []string{"--dangerously-skip-permissions"}
 	}
 
 	return &WizardResult{
