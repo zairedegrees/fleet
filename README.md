@@ -1,4 +1,6 @@
-# fleet
+<p align="center">
+  <img src="docs/fleet-banner.png" alt="fleet — launch &amp; orchestrate multi-agent Claude Code fleets" width="820">
+</p>
 
 [![CI](https://github.com/zairedegrees/fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/zairedegrees/fleet/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zairedegrees/fleet.svg)](https://pkg.go.dev/github.com/zairedegrees/fleet)
