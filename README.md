@@ -10,6 +10,8 @@
 
 ![An eight-agent fleet in an iTerm2 grid, each Claude Code agent color-coded by role](docs/fleet-grid.png)
 
+![The fleet wizard — pick a project, confirm the relay, choose a team preset, and launch](docs/fleet-wizard.gif)
+
 ```bash
 fleet                          # interactive wizard: pick a project, a team, launch
 fleet dispatch "fix the failing auth test" --to auditor
