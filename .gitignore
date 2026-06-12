@@ -12,5 +12,8 @@
 *.pid
 *.log
 
+# macOS
+.DS_Store
+
 # Internal brainstorming/spec/plan artifacts — never ship to the public repo
 docs/superpowers/
