@@ -172,8 +172,10 @@ func applyLeadershipTx(tx *sql.Tx, project, agentName string, isExecutive bool) 
 	} else if err != nil {
 		return err
 	}
+	// OR REPLACE matches wrai.th's AddTeamMember: a respawn re-drive refreshes the
+	// membership row (role/joined_at) rather than leaving a stale one.
 	_, err = tx.Exec(
-		"INSERT OR IGNORE INTO team_members (team_id, agent_name, project, role, joined_at) VALUES (?, ?, ?, ?, ?)",
+		"INSERT OR REPLACE INTO team_members (team_id, agent_name, project, role, joined_at) VALUES (?, ?, ?, ?, ?)",
 		teamID, strings.ToLower(agentName), project, "admin", nowRFC3339())
 	return err
 }
@@ -206,10 +208,17 @@ func handleRegisterAgent(s *Server, args map[string]any) (toolResult, error) {
 	if err != nil {
 		return toolResult{}, err
 	}
-	return resultText(map[string]any{
+	resp := map[string]any{
 		"agent":           agent,
 		"session_context": map[string]any{"is_respawn": isRespawn},
-	})
+	}
+	// Executives are auto-added to the leadership admin team; surface the same
+	// two response keys wrai.th does so a broadcast-capable agent knows.
+	if agent.IsExecutive {
+		resp["auto_admin_team"] = "leadership"
+		resp["hint"] = "You were auto-added to the 'leadership' admin team (broadcast enabled). Use send_message(to='*') to broadcast."
+	}
+	return resultText(resp)
 }
 
 func handleListAgents(s *Server, args map[string]any) (toolResult, error) {
@@ -228,5 +237,5 @@ func handleDeactivateAgent(s *Server, args map[string]any) (toolResult, error) {
 	if err := s.store.deactivateAgent(resolveProject(args), name); err != nil {
 		return toolResult{}, err
 	}
-	return resultText(map[string]any{"deactivated": true, "name": name})
+	return resultText(map[string]any{"deactivated": true, "agent": name})
 }

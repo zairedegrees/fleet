@@ -3,6 +3,7 @@ package coord
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -66,19 +67,60 @@ func argStringDefault(m map[string]any, key, def string) string {
 	return def
 }
 
+// argBool mirrors mcp-go's GetBool coercion: a JSON bool, a string ("true"),
+// or a number all resolve. Matching the coercion matters because presence is
+// detected separately (argPresent) — a stringly-typed "true" must read as true,
+// not fall to the default and clobber a preserved field on respawn.
 func argBool(m map[string]any, key string, def bool) bool {
-	if v, ok := m[key].(bool); ok {
+	switch v := m[key].(type) {
+	case bool:
 		return v
+	case string:
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	case float64:
+		return v != 0
 	}
 	return def
 }
 
+// argInt mirrors mcp-go's GetInt coercion: JSON numbers decode as float64, but
+// a string ("500") or a native int also resolve.
 func argInt(m map[string]any, key string, def int) int {
-	// JSON numbers decode into map[string]any as float64.
-	if v, ok := m[key].(float64); ok {
+	switch v := m[key].(type) {
+	case float64:
 		return int(v)
+	case int:
+		return v
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
+}
+
+// argJSONArray ports wrai.th's normalizeJSONArrayParam: a JSON string is kept
+// as-is, a non-JSON string is wrapped as a single-element array, a native
+// array/object is re-marshaled, and an absent/empty value yields "[]".
+func argJSONArray(m map[string]any, key string) string {
+	if s, ok := m[key].(string); ok {
+		if s == "" {
+			return "[]"
+		}
+		if json.Valid([]byte(s)) {
+			return s
+		}
+		b, _ := json.Marshal([]string{s})
+		return string(b)
+	}
+	if raw, ok := m[key]; ok && raw != nil {
+		if b, err := json.Marshal(raw); err == nil {
+			return string(b)
+		}
+	}
+	return "[]"
 }
 
 // argPresent reports whether key was provided at all — the distinction the

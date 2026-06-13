@@ -1,6 +1,7 @@
 package coord
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -45,19 +46,125 @@ func TestDispatchRoutesByProfileAndCountCapsAtLimit(t *testing.T) {
 }
 
 // TestDispatchReadsProfileArgKey pins the P0: both dispatch_task and list_tasks
-// must read the argument key "profile" (not "profile_slug"). Reading the wrong
-// key routes every task to slug "" and makes list_tasks return 0.
+// must read the argument key "profile" (not "profile_slug"). The assertions are
+// isolated so a regression to "profile_slug" actually fails — reading the wrong
+// key on dispatch writes profile_slug="" (caught by the column check), and on
+// list drops the WHERE filter (caught by the two-profile count check).
 func TestDispatchReadsProfileArgKey(t *testing.T) {
 	s := New(newTestStore(t))
+
 	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "profile": "x", "title": "hi"})
 
+	// dispatch wrote profile_slug from the "profile" arg — not "".
+	var slug string
+	if err := s.store.reader().QueryRow(`SELECT profile_slug FROM tasks WHERE project='p' LIMIT 1`).Scan(&slug); err != nil {
+		t.Fatal(err)
+	}
+	if slug != "x" {
+		t.Fatalf("dispatch read the wrong arg key: task.profile_slug = %q, want x", slug)
+	}
+
+	// A second task on profile "y": listing "x" must return exactly 1 (fails if
+	// list_tasks reads the wrong key and drops the profile filter, returning 2).
+	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "profile": "y", "title": "yo"})
 	res := mustCall(t, s, "list_tasks", map[string]any{"project": "p", "profile": "x"})
 	var out struct {
 		Count int `json:"count"`
 	}
 	decodePayload(t, res, &out)
 	if out.Count != 1 {
-		t.Fatalf("dispatch/list by the 'profile' arg key did not route: count=%d", out.Count)
+		t.Fatalf("list_tasks filter by 'profile' wrong: count=%d, want 1", out.Count)
+	}
+}
+
+// TestDispatchExcludesDispatcherFromNotify makes the `n == dispatchedBy` skip
+// load-bearing: two agents share the profile and one IS the dispatcher.
+func TestDispatchExcludesDispatcherFromNotify(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "register_agent", map[string]any{"name": "lead", "project": "p", "profile_slug": "worker"})
+	mustCall(t, s, "register_agent", map[string]any{"name": "worker1", "project": "p", "profile_slug": "worker"})
+
+	mustCall(t, s, "dispatch_task", map[string]any{"as": "lead", "project": "p", "profile": "worker", "title": "task"})
+
+	var toLead, toWorker int
+	s.store.reader().QueryRow(`SELECT COUNT(*) FROM messages WHERE to_agent='lead'`).Scan(&toLead)
+	s.store.reader().QueryRow(`SELECT COUNT(*) FROM messages WHERE to_agent='worker1'`).Scan(&toWorker)
+	if toLead != 0 {
+		t.Errorf("dispatcher 'lead' was self-notified (%d); exclusion branch is dead", toLead)
+	}
+	if toWorker != 1 {
+		t.Errorf("worker1 notify = %d, want 1", toWorker)
+	}
+}
+
+// TestAutoNotifyMessageContent pins the notify message wire (type/subject/
+// content/metadata/priority/ttl) against wrai.th — the agent-skill-visible part.
+func TestAutoNotifyMessageContent(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "register_agent", map[string]any{"name": "worker1", "project": "p", "profile_slug": "worker"})
+	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "profile": "worker", "title": "ship it", "priority": "P1"})
+
+	var typ, subject, content, metadata, priority string
+	var ttl int
+	if err := s.store.reader().QueryRow(
+		`SELECT type, subject, content, metadata, priority, ttl_seconds FROM messages WHERE to_agent='worker1'`).
+		Scan(&typ, &subject, &content, &metadata, &priority, &ttl); err != nil {
+		t.Fatal(err)
+	}
+	if typ != "task" {
+		t.Errorf("type = %q, want task", typ)
+	}
+	if subject != "New task: ship it" {
+		t.Errorf("subject = %q", subject)
+	}
+	if !strings.HasPrefix(content, "[P1] ship it") {
+		t.Errorf("content prefix = %q", content)
+	}
+	if !strings.Contains(content, "Profile: worker") || !strings.Contains(content, "Dispatched by: anonymous") {
+		t.Errorf("content missing fields: %q", content)
+	}
+	if priority != "P2" {
+		t.Errorf("notify priority = %q, want P2", priority)
+	}
+	if ttl != 14400 {
+		t.Errorf("ttl_seconds = %d, want 14400", ttl)
+	}
+	if !strings.Contains(metadata, `"task_id"`) {
+		t.Errorf("metadata missing task_id: %q", metadata)
+	}
+}
+
+// TestListTasksActiveExcludesTerminal proves the status='active' filter excludes
+// done/cancelled — the exact filter the live CountActiveTasks consumer sends. A
+// done row is inserted directly since the transition handlers are a later wave.
+func TestListTasksActiveExcludesTerminal(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "profile": "w", "title": "pending one"})
+	if err := s.store.write(func(tx *sql.Tx) error {
+		_, e := tx.Exec(
+			`INSERT INTO tasks (id, profile_slug, dispatched_by, title, status, priority, project, dispatched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			newID(), "w", "x", "done one", "done", "P2", "p", nowMicro())
+		return e
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	active := mustCall(t, s, "list_tasks", map[string]any{"project": "p", "profile": "w", "status": "active"})
+	var ao struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, active, &ao)
+	if ao.Count != 1 {
+		t.Errorf("active count = %d, want 1 (done excluded)", ao.Count)
+	}
+
+	all := mustCall(t, s, "list_tasks", map[string]any{"project": "p", "profile": "w"})
+	var allo struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, all, &allo)
+	if allo.Count != 2 {
+		t.Errorf("unfiltered count = %d, want 2 (done included)", allo.Count)
 	}
 }
 

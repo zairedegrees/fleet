@@ -40,13 +40,18 @@ func TestListAgentsFiltersAndOrders(t *testing.T) {
 
 func TestDeactivateReturnsTrueEvenIfNoop(t *testing.T) {
 	s := New(newTestStore(t))
-	res := mustCall(t, s, "deactivate_agent", map[string]any{"name": "ghost", "project": "p"})
+	res := mustCall(t, s, "deactivate_agent", map[string]any{"name": "Ghost", "project": "p"})
 	var out struct {
-		Deactivated bool `json:"deactivated"`
+		Deactivated bool   `json:"deactivated"`
+		Agent       string `json:"agent"`
 	}
 	decodePayload(t, res, &out)
 	if !out.Deactivated {
 		t.Error("deactivate of a non-existent agent should still report deactivated true")
+	}
+	// Key is "agent" (matching wrai.th), carrying the lowercased name.
+	if out.Agent != "ghost" {
+		t.Errorf("response agent = %q, want lowercased 'ghost'", out.Agent)
 	}
 }
 

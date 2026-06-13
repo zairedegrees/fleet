@@ -47,12 +47,37 @@ func TestReRegisterPreservesIdentityOnOmit(t *testing.T) {
 
 func TestExplicitFieldsStillUpdate(t *testing.T) {
 	s := New(newTestStore(t))
-	mustCall(t, s, "register_agent", map[string]any{"name": "ops", "project": "p", "profile_slug": "old"})
-	mustCall(t, s, "register_agent", map[string]any{"name": "ops", "project": "p", "profile_slug": "new"})
+	mustCall(t, s, "register_agent", map[string]any{
+		"name": "ops", "project": "p",
+		"profile_slug": "old", "reports_to": "boss1", "is_executive": true, "session_id": "s1",
+	})
+	// Every identity field explicitly changed — including is_executive true->false,
+	// which must be honored (an explicit false is not "omitted").
+	mustCall(t, s, "register_agent", map[string]any{
+		"name": "ops", "project": "p",
+		"profile_slug": "new", "reports_to": "boss2", "is_executive": false, "session_id": "s2",
+	})
 
 	a, _ := s.store.getAgent("p", "ops")
 	if a.ProfileSlug == nil || *a.ProfileSlug != "new" {
-		t.Errorf("explicitly-provided profile_slug not updated: %v", a.ProfileSlug)
+		t.Errorf("profile_slug not updated: %v", a.ProfileSlug)
+	}
+	if a.ReportsTo == nil || *a.ReportsTo != "boss2" {
+		t.Errorf("reports_to not updated: %v", a.ReportsTo)
+	}
+	if a.IsExecutive {
+		t.Error("explicit is_executive=false was not honored (preserved as true)")
+	}
+	if a.SessionID == nil || *a.SessionID != "s2" {
+		t.Errorf("session_id not updated: %v", a.SessionID)
+	}
+}
+
+func TestLeadershipMembershipLowercasesName(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "register_agent", map[string]any{"name": "Boss", "project": "p", "is_executive": true})
+	if !isLeadershipMember(t, s, "p", "boss") {
+		t.Error("executive 'Boss' not added to leadership team under lowercased 'boss'")
 	}
 }
 

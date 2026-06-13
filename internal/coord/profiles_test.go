@@ -36,3 +36,37 @@ func TestRegisterProfileUpsert(t *testing.T) {
 		t.Errorf("profile row count = %d, want 1 (upsert not insert)", count)
 	}
 }
+
+// TestRegisterProfilePoolSizeAndAllowedTools covers the option-gated fields:
+// they persist when provided, and on a later upsert that omits them the existing
+// values are preserved (matching wrai.th's opt gating).
+func TestRegisterProfilePoolSizeAndAllowedTools(t *testing.T) {
+	s := New(newTestStore(t))
+
+	r1 := mustCall(t, s, "register_profile", map[string]any{
+		"slug": "dev", "name": "Dev", "project": "p",
+		"pool_size": 5, "allowed_tools": `["Read","Bash"]`,
+	})
+	var p1 Profile
+	decodePayload(t, r1, &p1)
+	if p1.PoolSize != 5 {
+		t.Errorf("pool_size = %d, want 5", p1.PoolSize)
+	}
+	if p1.AllowedTools != `["Read","Bash"]` {
+		t.Errorf("allowed_tools = %q", p1.AllowedTools)
+	}
+
+	// Upsert changing pool_size but omitting allowed_tools: pool_size updates,
+	// allowed_tools is preserved (not reset to []).
+	r2 := mustCall(t, s, "register_profile", map[string]any{
+		"slug": "dev", "name": "Dev", "project": "p", "pool_size": 2,
+	})
+	var p2 Profile
+	decodePayload(t, r2, &p2)
+	if p2.PoolSize != 2 {
+		t.Errorf("pool_size not updated: %d, want 2", p2.PoolSize)
+	}
+	if p2.AllowedTools != `["Read","Bash"]` {
+		t.Errorf("allowed_tools not preserved on omit: %q", p2.AllowedTools)
+	}
+}

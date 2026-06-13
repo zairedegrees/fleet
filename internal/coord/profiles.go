@@ -11,10 +11,12 @@ func scanProfile(row interface{ Scan(...any) error }) (Profile, error) {
 	return p, err
 }
 
-// registerProfile upserts on (project, slug): a new profile seeds allowed_tools
-// [] and pool_size 3; an existing one updates its fields while preserving
-// created_at.
-func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys, skills, vaultPaths string) (*Profile, error) {
+// registerProfile upserts on (project, slug). allowedTools/poolSize follow
+// wrai.th's option gating: allowed_tools is applied only when non-empty and not
+// "[]", pool_size only when > 0 — otherwise a new profile keeps the defaults
+// ([], 3) and an existing one keeps its current values. created_at is preserved
+// across upserts.
+func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys, skills, vaultPaths, allowedTools string, poolSize int) (*Profile, error) {
 	now := nowMicro()
 	if soulKeys == "" {
 		soulKeys = "[]"
@@ -25,6 +27,7 @@ func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys
 	if vaultPaths == "" {
 		vaultPaths = "[]"
 	}
+	applyAllowed := allowedTools != "" && allowedTools != "[]"
 
 	var result *Profile
 	err := s.write(func(tx *sql.Tx) error {
@@ -34,6 +37,12 @@ func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys
 				ID: newID(), Slug: slug, Name: name, Role: role, ContextPack: contextPack,
 				SoulKeys: soulKeys, Skills: skills, VaultPaths: vaultPaths,
 				AllowedTools: "[]", PoolSize: 3, Project: project, CreatedAt: now, UpdatedAt: now,
+			}
+			if applyAllowed {
+				p.AllowedTools = allowedTools
+			}
+			if poolSize > 0 {
+				p.PoolSize = poolSize
 			}
 			if _, err := tx.Exec(
 				"INSERT INTO profiles (id, slug, name, role, context_pack, soul_keys, skills, vault_paths, allowed_tools, pool_size, project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -54,9 +63,15 @@ func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys
 		existing.Skills = skills
 		existing.VaultPaths = vaultPaths
 		existing.UpdatedAt = now
+		if applyAllowed {
+			existing.AllowedTools = allowedTools
+		}
+		if poolSize > 0 {
+			existing.PoolSize = poolSize
+		}
 		if _, err := tx.Exec(
-			"UPDATE profiles SET name = ?, role = ?, context_pack = ?, soul_keys = ?, skills = ?, vault_paths = ?, updated_at = ? WHERE slug = ? AND project = ?",
-			existing.Name, existing.Role, existing.ContextPack, existing.SoulKeys, existing.Skills, existing.VaultPaths, now, slug, project); err != nil {
+			"UPDATE profiles SET name = ?, role = ?, context_pack = ?, soul_keys = ?, skills = ?, vault_paths = ?, allowed_tools = ?, pool_size = ?, updated_at = ? WHERE slug = ? AND project = ?",
+			existing.Name, existing.Role, existing.ContextPack, existing.SoulKeys, existing.Skills, existing.VaultPaths, existing.AllowedTools, existing.PoolSize, now, slug, project); err != nil {
 			return err
 		}
 		result = &existing
@@ -73,15 +88,21 @@ func handleRegisterProfile(s *Server, args map[string]any) (toolResult, error) {
 	if slug == "" {
 		return resultError("slug is required"), nil
 	}
+	name := argString(args, "name")
+	if name == "" {
+		return resultError("name is required"), nil
+	}
 	p, err := s.store.registerProfile(
 		resolveProject(args),
 		slug,
-		argString(args, "name"),
+		name,
 		argString(args, "role"),
 		argString(args, "context_pack"),
-		argStringDefault(args, "soul_keys", "[]"),
-		argStringDefault(args, "skills", "[]"),
-		argStringDefault(args, "vault_paths", "[]"),
+		argJSONArray(args, "soul_keys"),
+		argJSONArray(args, "skills"),
+		argJSONArray(args, "vault_paths"),
+		argJSONArray(args, "allowed_tools"),
+		argInt(args, "pool_size", 0),
 	)
 	if err != nil {
 		return toolResult{}, err
