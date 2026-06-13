@@ -77,13 +77,17 @@ func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, descript
 	return task, nil
 }
 
-// insertMessageTx inserts an inbox message. content/metadata are key-normalized
+// insertMessageTx inserts an inbox message and queues its delivery so it shows
+// up in the recipient's delivery-based inbox. content/metadata are key-normalized
 // like wrai.th's InsertMessage; non-JSON content passes through unchanged.
 func insertMessageTx(tx *sql.Tx, project, from, to, msgType, subject, content, metadata, priority string) error {
-	_, err := tx.Exec(
+	msgID := newID()
+	if _, err := tx.Exec(
 		"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id, project, priority, ttl_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		newID(), from, to, nil, msgType, subject, normalize.JSONKeys(content), normalize.JSONKeys(metadata), nowMicro(), nil, project, priority, 14400)
-	return err
+		msgID, from, to, nil, msgType, subject, normalize.JSONKeys(content), normalize.JSONKeys(metadata), nowMicro(), nil, project, priority, 14400); err != nil {
+		return err
+	}
+	return createDeliveryTx(tx, msgID, project, []string{to})
 }
 
 // listTasks mirrors wrai.th: default limit 50, non-archived, status "active"

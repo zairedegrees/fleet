@@ -28,6 +28,9 @@ var handlers = map[string]handlerFunc{
 	"complete_task":    handleCompleteTask,
 	"block_task":       handleBlockTask,
 	"get_task":         handleGetTask,
+	"send_message":     handleSendMessage,
+	"get_inbox":        handleGetInbox,
+	"mark_read":        handleMarkRead,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.
@@ -126,6 +129,22 @@ func argJSONArray(m map[string]any, key string) string {
 		}
 	}
 	return "[]"
+}
+
+// argStringSlice extracts a []string from a JSON array arg (elements that are
+// not strings are skipped).
+func argStringSlice(m map[string]any, key string) []string {
+	v, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(v))
+	for _, e := range v {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // argPresent reports whether key was provided at all — the distinction the
