@@ -15,7 +15,13 @@ type handlerFunc func(s *Server, args map[string]any) (toolResult, error)
 // than a transport failure, so agents calling out-of-scope wrai.th tools get a
 // clean isError instead of a disconnect.
 var handlers = map[string]handlerFunc{
-	"list_orgs": handleListOrgs,
+	"list_orgs":        handleListOrgs,
+	"register_agent":   handleRegisterAgent,
+	"list_agents":      handleListAgents,
+	"deactivate_agent": handleDeactivateAgent,
+	"register_profile": handleRegisterProfile,
+	"dispatch_task":    handleDispatchTask,
+	"list_tasks":       handleListTasks,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.
@@ -49,6 +55,56 @@ func argString(m map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// argStringDefault returns the string arg, or def when absent/empty — mirroring
+// wrai.th's req.GetString(key, default).
+func argStringDefault(m map[string]any, key, def string) string {
+	if v := argString(m, key); v != "" {
+		return v
+	}
+	return def
+}
+
+func argBool(m map[string]any, key string, def bool) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return def
+}
+
+func argInt(m map[string]any, key string, def int) int {
+	// JSON numbers decode into map[string]any as float64.
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	return def
+}
+
+// argPresent reports whether key was provided at all — the distinction the
+// register_agent preserve-on-omit logic hinges on (an omitted optional field
+// must be preserved, not cleared).
+func argPresent(m map[string]any, key string) bool {
+	_, ok := m[key]
+	return ok
+}
+
+// optionalString returns nil for an empty string, else a pointer to it.
+func optionalString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// optionalStringLower lowercases then wraps; used for case-folded fields like
+// reports_to.
+func optionalStringLower(s string) *string {
+	if s == "" {
+		return nil
+	}
+	l := strings.ToLower(s)
+	return &l
 }
 
 // resolveProject mirrors wrai.th: an empty/absent project means "default".
