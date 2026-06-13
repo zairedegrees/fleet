@@ -136,7 +136,207 @@ func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo str
 	return tasks, rows.Err()
 }
 
+// validTransitions is the task state machine. An agent move must be in the
+// allowed set for the current status; the special agent name "user" bypasses
+// validation (admin force-move).
+var validTransitions = map[string][]string{
+	"pending":     {"accepted", "in-progress", "done", "cancelled"},
+	"accepted":    {"in-progress", "done", "cancelled"},
+	"in-progress": {"done", "blocked", "cancelled"},
+	"blocked":     {"in-progress", "done", "cancelled"},
+	"done":        {"cancelled"},
+	"cancelled":   {},
+}
+
+// normalizePtr key-normalizes a task result string (no-op on nil / non-JSON).
+func normalizePtr(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	v := normalize.JSONKeys(*s)
+	return &v
+}
+
+// transitionTask moves a task to newStatus inside one serialized transaction,
+// validating the move (unless agentName is "user") and applying the per-status
+// timestamp/field changes that wrai.th does.
+func (s *Store) transitionTask(taskID, agentName, project, newStatus string, result, blockedReason *string) (*Task, error) {
+	now := nowMicro()
+	var out *Task
+	err := s.write(func(tx *sql.Tx) error {
+		task, err := scanTask(tx.QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ? AND project = ?", taskID, project))
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("task not found: %s", taskID)
+		}
+		if err != nil {
+			return err
+		}
+
+		if agentName != "user" {
+			valid := false
+			for _, st := range validTransitions[task.Status] {
+				if st == newStatus {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("invalid transition: %s → %s", task.Status, newStatus)
+			}
+		}
+
+		task.Status = newStatus
+		switch newStatus {
+		case "accepted":
+			task.AssignedTo = &agentName
+			task.AcceptedAt = &now
+			_, err = tx.Exec("UPDATE tasks SET status = ?, assigned_to = ?, accepted_at = ? WHERE id = ? AND project = ?",
+				newStatus, agentName, now, taskID, project)
+		case "in-progress":
+			task.AssignedTo = &agentName
+			task.StartedAt = &now
+			_, err = tx.Exec("UPDATE tasks SET status = ?, assigned_to = ?, started_at = ? WHERE id = ? AND project = ?",
+				newStatus, agentName, now, taskID, project)
+		case "done":
+			result = normalizePtr(result)
+			task.Result = result
+			task.CompletedAt = &now
+			_, err = tx.Exec("UPDATE tasks SET status = ?, result = ?, completed_at = ? WHERE id = ? AND project = ?",
+				newStatus, result, now, taskID, project)
+		case "blocked":
+			task.BlockedReason = blockedReason
+			_, err = tx.Exec("UPDATE tasks SET status = ?, blocked_reason = ? WHERE id = ? AND project = ?",
+				newStatus, blockedReason, taskID, project)
+		case "cancelled":
+			task.BlockedReason = blockedReason
+			task.CompletedAt = &now
+			_, err = tx.Exec("UPDATE tasks SET status = ?, blocked_reason = ?, completed_at = ? WHERE id = ? AND project = ?",
+				newStatus, blockedReason, now, taskID, project)
+		case "pending":
+			task.AssignedTo, task.AcceptedAt, task.StartedAt = nil, nil, nil
+			task.CompletedAt, task.Result, task.BlockedReason = nil, nil, nil
+			_, err = tx.Exec("UPDATE tasks SET status = ?, assigned_to = NULL, accepted_at = NULL, started_at = NULL, completed_at = NULL, result = NULL, blocked_reason = NULL WHERE id = ? AND project = ?",
+				newStatus, taskID, project)
+		}
+		if err != nil {
+			return err
+		}
+		out = &task
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) getTask(taskID, project string) (*Task, error) {
+	t, err := scanTask(s.reader().QueryRow("SELECT "+taskColumns+" FROM tasks WHERE id = ? AND project = ?", taskID, project))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// resolveTaskID accepts a full UUID or a unique prefix (agents often paste a
+// short id), returning the full id.
+func (s *Store) resolveTaskID(taskID, project string) (string, error) {
+	if len(taskID) >= 36 {
+		return taskID, nil
+	}
+	var id string
+	err := s.reader().QueryRow("SELECT id FROM tasks WHERE project = ? AND id LIKE ? ORDER BY dispatched_at LIMIT 1", project, taskID+"%").Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("task not found: %s", taskID)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // --- handlers ---
+
+// resolveTaskArg pulls and resolves task_id; on failure it returns the error
+// result to send and ok=false.
+func resolveTaskArg(s *Server, args map[string]any) (id, project string, errRes toolResult, ok bool) {
+	project = resolveProject(args)
+	taskID := argString(args, "task_id")
+	if taskID == "" {
+		return "", project, resultError("task_id is required"), false
+	}
+	resolved, err := s.store.resolveTaskID(taskID, project)
+	if err != nil {
+		return "", project, resultError(err.Error()), false
+	}
+	return resolved, project, toolResult{}, true
+}
+
+func handleClaimTask(s *Server, args map[string]any) (toolResult, error) {
+	id, project, errRes, ok := resolveTaskArg(s, args)
+	if !ok {
+		return errRes, nil
+	}
+	task, err := s.store.transitionTask(id, resolveAgent(args), project, "accepted", nil, nil)
+	if err != nil {
+		return resultError(err.Error()), nil
+	}
+	return resultText(task)
+}
+
+func handleStartTask(s *Server, args map[string]any) (toolResult, error) {
+	id, project, errRes, ok := resolveTaskArg(s, args)
+	if !ok {
+		return errRes, nil
+	}
+	task, err := s.store.transitionTask(id, resolveAgent(args), project, "in-progress", nil, nil)
+	if err != nil {
+		return resultError(err.Error()), nil
+	}
+	return resultText(task)
+}
+
+func handleCompleteTask(s *Server, args map[string]any) (toolResult, error) {
+	id, project, errRes, ok := resolveTaskArg(s, args)
+	if !ok {
+		return errRes, nil
+	}
+	task, err := s.store.transitionTask(id, resolveAgent(args), project, "done", optionalString(argString(args, "result")), nil)
+	if err != nil {
+		return resultError(err.Error()), nil
+	}
+	return resultText(task)
+}
+
+func handleBlockTask(s *Server, args map[string]any) (toolResult, error) {
+	id, project, errRes, ok := resolveTaskArg(s, args)
+	if !ok {
+		return errRes, nil
+	}
+	task, err := s.store.transitionTask(id, resolveAgent(args), project, "blocked", nil, optionalString(argString(args, "reason")))
+	if err != nil {
+		return resultError(err.Error()), nil
+	}
+	return resultText(task)
+}
+
+func handleGetTask(s *Server, args map[string]any) (toolResult, error) {
+	id, project, errRes, ok := resolveTaskArg(s, args)
+	if !ok {
+		return errRes, nil
+	}
+	task, err := s.store.getTask(id, project)
+	if err != nil {
+		return toolResult{}, err
+	}
+	if task == nil {
+		return resultError("task not found: " + id), nil
+	}
+	return resultText(task)
+}
 
 func handleDispatchTask(s *Server, args map[string]any) (toolResult, error) {
 	// The fleet client and the agent skill both send the routing target under the

@@ -23,6 +23,11 @@ var handlers = map[string]handlerFunc{
 	"register_profile": handleRegisterProfile,
 	"dispatch_task":    handleDispatchTask,
 	"list_tasks":       handleListTasks,
+	"claim_task":       handleClaimTask,
+	"start_task":       handleStartTask,
+	"complete_task":    handleCompleteTask,
+	"block_task":       handleBlockTask,
+	"get_task":         handleGetTask,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.
