@@ -83,6 +83,17 @@ func (s *Store) registerProfile(project, slug, name, role, contextPack, soulKeys
 	return result, nil
 }
 
+func (s *Store) getProfile(project, slug string) (*Profile, error) {
+	p, err := scanProfile(s.reader().QueryRow("SELECT "+profileColumns+" FROM profiles WHERE slug = ? AND project = ?", slug, project))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 func handleRegisterProfile(s *Server, args map[string]any) (toolResult, error) {
 	slug := argString(args, "slug")
 	if slug == "" {

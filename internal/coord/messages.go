@@ -224,7 +224,13 @@ func handleGetInbox(s *Server, args map[string]any) (toolResult, error) {
 		return toolResult{}, err
 	}
 
-	fullContent := argBool(args, "full_content", false)
+	formatted := formatInboxEntries(entries, argBool(args, "full_content", false))
+	return resultText(map[string]any{"agent": agent, "count": len(entries), "messages": formatted})
+}
+
+// formatInboxEntries renders inbox rows for the wire. Content is truncated to
+// 300 chars unless fullContent (session_context wants the full text).
+func formatInboxEntries(entries []inboxEntry, fullContent bool) []map[string]any {
 	formatted := make([]map[string]any, len(entries))
 	for i, m := range entries {
 		content := m.Content
@@ -247,8 +253,7 @@ func handleGetInbox(s *Server, args map[string]any) (toolResult, error) {
 		}
 		formatted[i] = entry
 	}
-
-	return resultText(map[string]any{"agent": agent, "count": len(entries), "messages": formatted})
+	return formatted
 }
 
 func handleMarkRead(s *Server, args map[string]any) (toolResult, error) {
