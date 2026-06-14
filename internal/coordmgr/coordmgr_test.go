@@ -131,6 +131,30 @@ func TestStopGuardsOnCoordServe(t *testing.T) {
 	}
 }
 
+func TestInstallSkillWritesEmbedded(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "skills", "relay", "SKILL.md")
+	old := skillDest
+	skillDest = func() string { return dest }
+	defer func() { skillDest = old }()
+
+	if err := InstallSkill(); err != nil {
+		t.Fatalf("InstallSkill: %v", err)
+	}
+	b, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read installed skill: %v", err)
+	}
+	content := string(b)
+	for _, want := range []string{"name: relay", "get_inbox", "talk"} {
+		if !contains(content, want) {
+			t.Errorf("installed skill missing %q", want)
+		}
+	}
+	if len(content) < 400 {
+		t.Errorf("installed skill suspiciously short: %d bytes", len(content))
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

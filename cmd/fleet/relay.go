@@ -8,7 +8,18 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/coordmgr"
 	"github.com/zairedegrees/fleet/internal/relaymgr"
+)
+
+const (
+	backendEmbedded = "embedded"
+	backendDownload = "download"
+	// defaultBackend is used when nothing overrides it. It stays "download"
+	// during the coord rollout so existing setups keep using the prebuilt binary;
+	// flip to backendEmbedded once the embedded core is validated end-to-end.
+	defaultBackend = backendDownload
 )
 
 // seams for testing
@@ -18,23 +29,47 @@ var (
 	ensureRelayBinary  = relaymgr.EnsureBinary
 	ensureRelaySkillFn = relaymgr.EnsureRelaySkill
 	ensureRelayRunning = relaymgr.EnsureRunning
+	installCoordSkill  = coordmgr.InstallSkill
+	ensureCoordRunning = coordmgr.EnsureRunning
 )
 
 func relaymgrReachable(url string) bool { return relaymgr.Reachable(url) }
 
-// ensureRelaySetup makes a relay available for a launch: if none is reachable and
-// the url is the default local one, it asks consent once, then acquires the
-// binary + /relay skill and auto-starts the managed relay. External --relay-url
-// is never auto-managed.
-func ensureRelaySetup(url string, isExternal bool) error {
+// coordBackend resolves the coordination backend: --relay-backend flag >
+// FLEET_RELAY_BACKEND env > the project's relay_backend > the built-in default.
+func coordBackend(cfg *config.FleetConfig) string {
+	if flagRelayBackend != "" {
+		return flagRelayBackend
+	}
+	if v := os.Getenv("FLEET_RELAY_BACKEND"); v != "" {
+		return v
+	}
+	if cfg != nil && cfg.Project.RelayBackend != "" {
+		return cfg.Project.RelayBackend
+	}
+	return defaultBackend
+}
+
+// ensureRelaySetup makes a relay available for a launch. If none is reachable and
+// the url is the default local one, it brings up the selected backend: "embedded"
+// starts the in-binary coord (no download, no AGPL, no consent), "download"
+// acquires the AGPL agent-relay binary after consent. External --relay-url is
+// never auto-managed.
+func ensureRelaySetup(url string, isExternal bool, backend string) error {
 	if reachable(url) {
 		return nil
 	}
 	if isExternal {
 		return fmt.Errorf("relay unreachable at %s (external --relay-url is not auto-managed)", url)
 	}
+	if backend == backendEmbedded {
+		if err := installCoordSkill(); err != nil {
+			return err
+		}
+		return ensureCoordRunning(url, isExternal)
+	}
 	if !askConsent(url) {
-		return fmt.Errorf("relay setup declined — install wrai.th manually or pass --relay-url <url>")
+		return fmt.Errorf("relay setup declined — install wrai.th manually, pass --relay-url <url>, or use --relay-backend embedded")
 	}
 	if _, err := ensureRelayBinary(); err != nil {
 		return err
@@ -60,28 +95,34 @@ func newRelayCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "relay", Short: "Manage the fleet-bundled wrai.th relay"}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "start",
-		Short: "Download (first time) and start the managed relay",
+		Short: "Start the coordination backend (embedded coord, or the downloaded relay)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			url := resolveRelayURL(flagRelayURL, "")
 			if relaymgr.Reachable(url) {
 				fmt.Printf("  ✓ relay already running at %s\n", url)
 				return nil
 			}
-			if err := ensureRelaySetup(url, flagRelayURL != ""); err != nil {
+			if err := ensureRelaySetup(url, flagRelayURL != "", coordBackend(nil)); err != nil {
 				return err
 			}
-			fmt.Printf("  ✓ relay started at %s\n", url)
+			fmt.Printf("  ✓ relay started at %s (%s)\n", url, coordBackend(nil))
 			return nil
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "stop",
-		Short: "Stop the managed relay",
-		RunE:  func(_ *cobra.Command, _ []string) error { return relaymgr.Stop() },
+		Short: "Stop the managed coordination backend",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			// Stop whichever backend is running; each is a no-op without its pidfile.
+			if err := coordmgr.Stop(); err != nil {
+				return err
+			}
+			return relaymgr.Stop()
+		},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
-		Short: "Show managed-relay state",
+		Short: "Show coordination-backend state",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			url := resolveRelayURL(flagRelayURL, "")
 			if relaymgr.Reachable(url) {
@@ -89,7 +130,13 @@ func newRelayCmd() *cobra.Command {
 			} else {
 				fmt.Printf("  ✗ no relay at %s (run 'fleet relay start')\n", url)
 			}
-			fmt.Printf("  binary: %s\n", relaymgr.BinPath())
+			backend := coordBackend(nil)
+			fmt.Printf("  backend: %s\n", backend)
+			if backend == backendDownload {
+				fmt.Printf("  binary: %s\n", relaymgr.BinPath())
+			} else {
+				fmt.Printf("  db: %s\n", coordmgr.DBPath())
+			}
 			return nil
 		},
 	})

@@ -45,13 +45,14 @@ var (
 )
 
 var (
-	flagLast     bool
-	flagKill     bool
-	flagKillAll  bool
-	flagStatus   bool
-	flagDoctor   bool
-	flagForce    bool
-	flagRelayURL string
+	flagLast         bool
+	flagKill         bool
+	flagKillAll      bool
+	flagStatus       bool
+	flagDoctor       bool
+	flagForce        bool
+	flagRelayURL     string
+	flagRelayBackend string
 )
 
 // resolveRelayURL is the single priority chain for relay URL resolution:
@@ -81,6 +82,7 @@ func main() {
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
 	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
 	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")
+	root.PersistentFlags().StringVar(&flagRelayBackend, "relay-backend", "", "Coordination backend: embedded (in-binary coord) or download (AGPL agent-relay)")
 
 	dispatchCmd := &cobra.Command{
 		Use:   "dispatch [description]",
@@ -156,7 +158,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""))
+	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""), coordBackend(nil))
 	doctor.Print(checks)
 	return nil
 }
@@ -505,7 +507,7 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return err
 	}
 
-	if err := ensureRelaySetup(relayURL, flagRelayURL != ""); err != nil {
+	if err := ensureRelaySetup(relayURL, flagRelayURL != "", coordBackend(cfg)); err != nil {
 		fmt.Printf("  ✗ %v\n", err)
 		return err
 	}
