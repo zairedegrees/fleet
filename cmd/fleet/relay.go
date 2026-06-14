@@ -75,6 +75,16 @@ func stopBackends() error {
 // acquires the AGPL agent-relay binary after consent. External --relay-url is
 // never auto-managed.
 func ensureRelaySetup(url string, isExternal bool, backend string) error {
+	// Installing the /relay skill is a launch prerequisite, NOT part of starting
+	// the server: an agent woken later needs it to resolve `/relay talk`. So for
+	// the embedded backend it must happen even when coord is already reachable
+	// (a persistent service or a prior launch) — it can't sit behind the
+	// reachability short-circuit. The install is idempotent.
+	if backend == backendEmbedded && !isExternal {
+		if err := installCoordSkill(); err != nil {
+			return err
+		}
+	}
 	if reachable(url) {
 		return nil
 	}
@@ -83,9 +93,6 @@ func ensureRelaySetup(url string, isExternal bool, backend string) error {
 	}
 	switch backend {
 	case backendEmbedded:
-		if err := installCoordSkill(); err != nil {
-			return err
-		}
 		return ensureCoordRunning(url, isExternal)
 	case backendDownload:
 		if !askConsent(url) {

@@ -68,6 +68,26 @@ func TestEnsureRelaySetupEmbeddedSkipsConsentAndDownload(t *testing.T) {
 	}
 }
 
+func TestEnsureRelaySetupInstallsSkillEvenWhenReachable(t *testing.T) {
+	// coord already running (e.g. a persistent service or a prior launch): the
+	// reachability short-circuit must NOT skip installing the /relay skill — an
+	// agent woken later needs it to resolve `/relay talk`.
+	reachable = func(string) bool { return true }
+	skillInstalled := false
+	installCoordSkill = func() error { skillInstalled = true; return nil }
+	defer func() {
+		reachable = relaymgrReachable
+		installCoordSkill = coordmgr.InstallSkill
+	}()
+
+	if err := ensureRelaySetup("http://localhost:8090/mcp", false, backendEmbedded); err != nil {
+		t.Fatalf("ensureRelaySetup: %v", err)
+	}
+	if !skillInstalled {
+		t.Error("embedded backend must install the /relay skill even when coord is already reachable")
+	}
+}
+
 func TestExternalRelayBypassesBothBackends(t *testing.T) {
 	reachable = func(string) bool { return false }
 	defer func() { reachable = relaymgrReachable }()
