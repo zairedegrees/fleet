@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] — 2026-06-14
+
+### Fixed
+- The agent-configure choreography now settles before its first command, so the
+  `/rename` sent right after a pane's prompt appears is no longer dropped while
+  Claude Code is still loading MCP servers — agents reliably get their names.
+  (Pre-existing; surfaced on a live launch.)
+
 ## [0.1.1] — 2026-06-14
 
 ### Added
@@ -46,5 +54,6 @@ All notable changes to this project are documented here. The format is based on
 - A managed relay backend (downloaded agent-relay binary) and the `/fleet`
   onboarding skill.
 
+[0.1.2]: https://github.com/zairedegrees/fleet/releases/tag/v0.1.2
 [0.1.1]: https://github.com/zairedegrees/fleet/releases/tag/v0.1.1
 [0.1.0]: https://github.com/zairedegrees/fleet/releases/tag/v0.1.0
