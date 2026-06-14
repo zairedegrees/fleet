@@ -25,6 +25,8 @@ const (
 	dfRole
 	dfColor
 	dfReportsTo
+	dfModel
+	dfPermission
 	dfAutoTalk
 	dfExecutive
 )
@@ -34,6 +36,34 @@ var autoTalkOpts = []string{"off", "on"}
 
 // executiveOpts are the executive toggle options (index 1 = on).
 var executiveOpts = []string{"off", "on"}
+
+// modelOpts / permModeOpts are the drawer's select choices. Index 0 ("inherit")
+// maps to an empty stored value so an untouched field keeps Claude's default.
+// permModeOpts offers the common postures; the full enum (incl. "auto") stays
+// reachable via presets and hand-edited TOML.
+var modelOpts = []string{"inherit", "opus", "sonnet", "haiku"}
+var permModeOpts = []string{"inherit", "default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+
+// optToValue maps a select option to its stored value: "inherit" → "".
+func optToValue(opt string) string {
+	if opt == "inherit" {
+		return ""
+	}
+	return opt
+}
+
+// valueToOptIdx finds the option index for a stored value ("" → "inherit" at 0).
+func valueToOptIdx(opts []string, value string) int {
+	if value == "" {
+		return 0
+	}
+	for i, o := range opts {
+		if o == value {
+			return i
+		}
+	}
+	return 0
+}
 
 // fieldKind classifies how a drawer field is edited and rendered.
 type fieldKind int
@@ -58,6 +88,8 @@ var drawerFields = []fieldSpec{
 	{dfRole, kindText, "Role:       "},
 	{dfColor, kindSelect, "Color:      "},
 	{dfReportsTo, kindSelect, "Reports to: "},
+	{dfModel, kindSelect, "Model:      "},
+	{dfPermission, kindSelect, "Permission: "},
 	{dfAutoTalk, kindSelect, "Auto-talk:  "},
 	{dfExecutive, kindSelect, "Executive:  "},
 }
@@ -81,14 +113,16 @@ type agentDrawer struct {
 	colorIdx     int
 	reportsIdx   int
 	reportOpts   []string // "(none)" + agent names
+	modelIdx     int      // index into modelOpts
+	permIdx      int      // index into permModeOpts
 	autoTalkIdx  int      // index into autoTalkOpts
 	executiveIdx int      // index into executiveOpts
 
-	// base is the agent being edited (zero for create): save() starts from it
-	// so any future AgentConfig field the drawer doesn't manage survives an
-	// edit instead of being dropped. Today every field IS drawer-managed, so
-	// this capture is unobservable behavior — an equivalent mutant that no
-	// test can pin until config grows an unmanaged field.
+	// base is the agent being edited (zero for create): save() starts from it so
+	// AgentConfig fields the drawer does NOT manage survive an edit instead of
+	// being dropped. Persona/Skills/Tools are currently unmanaged (set by presets
+	// + TOML, not editable here), so this capture is now observable behavior —
+	// pinned by TestDrawerEditPreservesUnmanagedFields.
 	base config.AgentConfig
 
 	field     drawerField
@@ -150,6 +184,9 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 		}
 	}
 
+	d.modelIdx = valueToOptIdx(modelOpts, agent.Model)
+	d.permIdx = valueToOptIdx(permModeOpts, agent.PermissionMode)
+
 	d.autoTalkIdx = 0
 	if agent.AutoTalk {
 		d.autoTalkIdx = 1
@@ -179,6 +216,8 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 	for _, name := range agentNames {
 		d.reportOpts = append(d.reportOpts, name)
 	}
+	d.modelIdx = 0 // inherit
+	d.permIdx = 0  // inherit
 	d.autoTalkIdx = 0
 	d.executiveIdx = 0
 }
@@ -222,6 +261,10 @@ func (d *agentDrawer) selectState(id drawerField) ([]string, int) {
 		return agentColors, d.colorIdx
 	case dfReportsTo:
 		return d.reportOpts, d.reportsIdx
+	case dfModel:
+		return modelOpts, d.modelIdx
+	case dfPermission:
+		return permModeOpts, d.permIdx
 	case dfAutoTalk:
 		return autoTalkOpts, d.autoTalkIdx
 	case dfExecutive:
@@ -238,6 +281,10 @@ func (d *agentDrawer) selectPtr(id drawerField) (*int, int) {
 		return &d.colorIdx, len(agentColors)
 	case dfReportsTo:
 		return &d.reportsIdx, len(d.reportOpts)
+	case dfModel:
+		return &d.modelIdx, len(modelOpts)
+	case dfPermission:
+		return &d.permIdx, len(permModeOpts)
 	case dfAutoTalk:
 		return &d.autoTalkIdx, len(autoTalkOpts)
 	case dfExecutive:
@@ -339,6 +386,8 @@ func (d *agentDrawer) save() tea.Cmd {
 	agent.Color = agentColors[d.colorIdx]
 	agent.Role = strings.TrimSpace(d.roleInput.Value())
 	agent.ReportsTo = reportsTo
+	agent.Model = optToValue(modelOpts[d.modelIdx])
+	agent.PermissionMode = optToValue(permModeOpts[d.permIdx])
 	agent.AutoTalk = d.autoTalkIdx == 1
 	agent.IsExecutive = d.executiveIdx == 1
 
