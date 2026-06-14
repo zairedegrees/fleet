@@ -113,8 +113,8 @@ func argInt(m map[string]any, key string, def int) int {
 	return def
 }
 
-// argJSONArray ports wrai.th's normalizeJSONArrayParam: a JSON string is kept
-// as-is, a non-JSON string is wrapped as a single-element array, a native
+// argJSONArray normalizes a "JSON-array-or-string" argument: a JSON string is
+// kept as-is, a non-JSON string is wrapped as a single-element array, a native
 // array/object is re-marshaled, and an absent/empty value yields "[]".
 func argJSONArray(m map[string]any, key string) string {
 	if s, ok := m[key].(string); ok {

@@ -6,9 +6,11 @@
 package coordmgr
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -42,7 +44,9 @@ func DBPath() string { return filepath.Join(config.FleetDir(), "coord.db") }
 func Reachable(url string) bool { return probe(url) == nil }
 
 // Serve opens the coord store and serves the coordination API on port, blocking
-// until the process is signalled. This is the body of `fleet coord serve`.
+// until the process is signalled. On SIGTERM/SIGINT it drains in-flight requests
+// (coord.Shutdown) and closes the store so the WAL is finalized — this is the
+// body of `fleet coord serve`, the detached child Stop() signals.
 func Serve(port string) error {
 	if err := os.MkdirAll(config.FleetDir(), 0o755); err != nil {
 		return err
@@ -52,7 +56,21 @@ func Serve(port string) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	return coord.New(store).Serve(":" + port)
+
+	srv := coord.New(store)
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(":" + port) }()
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	select {
+	case err := <-serveErr:
+		return err
+	case <-sig:
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return srv.Shutdown(ctx)
+	}
 }
 
 // EnsureRunning guarantees coord answers at url, starting a detached child if

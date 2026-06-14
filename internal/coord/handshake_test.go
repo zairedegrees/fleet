@@ -100,7 +100,7 @@ func TestPingAndInitializedNotification(t *testing.T) {
 		t.Errorf("ping returned error: %v", resp.Error)
 	}
 	res, _ := postMCP(t, h, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if res.StatusCode != http.StatusOK {
-		t.Errorf("notifications/initialized = %d, want 200", res.StatusCode)
+	if res.StatusCode != http.StatusAccepted {
+		t.Errorf("notifications/initialized = %d, want 202", res.StatusCode)
 	}
 }

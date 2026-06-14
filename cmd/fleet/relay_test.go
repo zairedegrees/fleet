@@ -96,9 +96,26 @@ func TestCoordBackendResolution(t *testing.T) {
 	if got := coordBackend(&config.FleetConfig{Project: config.ProjectConfig{RelayBackend: backendEmbedded}}); got != backendDownload {
 		t.Errorf("env should override config, got %q", got)
 	}
-	// flag overrides env
-	flagRelayBackend = backendEmbedded
+	// flag overrides env, and surrounding whitespace is trimmed
+	flagRelayBackend = "  embedded  "
 	if got := coordBackend(nil); got != backendEmbedded {
-		t.Errorf("flag should override env, got %q", got)
+		t.Errorf("flag should override env and trim, got %q", got)
+	}
+}
+
+func TestEnsureRelaySetupUnknownBackendErrors(t *testing.T) {
+	reachable = func(string) bool { return false }
+	defer func() { reachable = relaymgrReachable }()
+
+	err := ensureRelaySetup("http://localhost:8090/mcp", false, "embeded" /* typo */)
+	if err == nil || !strings.Contains(err.Error(), "unknown relay backend") {
+		t.Errorf("an unrecognized backend must error (not silently download), got %v", err)
+	}
+}
+
+func TestStopBackendsNoopWithoutPidfiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := stopBackends(); err != nil {
+		t.Errorf("stopBackends with no pidfiles should be a no-op, got %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -38,16 +39,34 @@ func relaymgrReachable(url string) bool { return relaymgr.Reachable(url) }
 // coordBackend resolves the coordination backend: --relay-backend flag >
 // FLEET_RELAY_BACKEND env > the project's relay_backend > the built-in default.
 func coordBackend(cfg *config.FleetConfig) string {
-	if flagRelayBackend != "" {
-		return flagRelayBackend
+	if v := strings.TrimSpace(flagRelayBackend); v != "" {
+		return v
 	}
-	if v := os.Getenv("FLEET_RELAY_BACKEND"); v != "" {
+	if v := strings.TrimSpace(os.Getenv("FLEET_RELAY_BACKEND")); v != "" {
 		return v
 	}
 	if cfg != nil && cfg.Project.RelayBackend != "" {
-		return cfg.Project.RelayBackend
+		return strings.TrimSpace(cfg.Project.RelayBackend)
 	}
 	return defaultBackend
+}
+
+// resolvedBackend resolves the backend for standalone commands (relay
+// start/status, doctor) that have no launch cfg in hand, best-effort consulting
+// the last project's config so a config-pinned backend is honored everywhere the
+// launch path honors it.
+func resolvedBackend() string {
+	cfg, err := config.LoadLast()
+	if err != nil {
+		cfg = nil
+	}
+	return coordBackend(cfg)
+}
+
+// stopBackends stops both managed backends; each is a no-op without its pidfile.
+// Both always run (so one failing doesn't strand the other) and errors combine.
+func stopBackends() error {
+	return errors.Join(coordmgr.Stop(), relaymgr.Stop())
 }
 
 // ensureRelaySetup makes a relay available for a launch. If none is reachable and
@@ -62,22 +81,26 @@ func ensureRelaySetup(url string, isExternal bool, backend string) error {
 	if isExternal {
 		return fmt.Errorf("relay unreachable at %s (external --relay-url is not auto-managed)", url)
 	}
-	if backend == backendEmbedded {
+	switch backend {
+	case backendEmbedded:
 		if err := installCoordSkill(); err != nil {
 			return err
 		}
 		return ensureCoordRunning(url, isExternal)
+	case backendDownload:
+		if !askConsent(url) {
+			return fmt.Errorf("relay setup declined — install wrai.th manually, pass --relay-url <url>, or use --relay-backend embedded")
+		}
+		if _, err := ensureRelayBinary(); err != nil {
+			return err
+		}
+		if err := ensureRelaySkillFn(); err != nil {
+			return err
+		}
+		return ensureRelayRunning(url, isExternal)
+	default:
+		return fmt.Errorf("unknown relay backend %q (valid: %q or %q)", backend, backendEmbedded, backendDownload)
 	}
-	if !askConsent(url) {
-		return fmt.Errorf("relay setup declined — install wrai.th manually, pass --relay-url <url>, or use --relay-backend embedded")
-	}
-	if _, err := ensureRelayBinary(); err != nil {
-		return err
-	}
-	if err := ensureRelaySkillFn(); err != nil {
-		return err
-	}
-	return ensureRelayRunning(url, isExternal)
 }
 
 func defaultAskConsent(url string) bool {
@@ -102,23 +125,18 @@ func newRelayCmd() *cobra.Command {
 				fmt.Printf("  ✓ relay already running at %s\n", url)
 				return nil
 			}
-			if err := ensureRelaySetup(url, flagRelayURL != "", coordBackend(nil)); err != nil {
+			backend := resolvedBackend()
+			if err := ensureRelaySetup(url, flagRelayURL != "", backend); err != nil {
 				return err
 			}
-			fmt.Printf("  ✓ relay started at %s (%s)\n", url, coordBackend(nil))
+			fmt.Printf("  ✓ relay started at %s (%s)\n", url, backend)
 			return nil
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "stop",
 		Short: "Stop the managed coordination backend",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			// Stop whichever backend is running; each is a no-op without its pidfile.
-			if err := coordmgr.Stop(); err != nil {
-				return err
-			}
-			return relaymgr.Stop()
-		},
+		RunE:  func(_ *cobra.Command, _ []string) error { return stopBackends() },
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "status",
@@ -130,7 +148,7 @@ func newRelayCmd() *cobra.Command {
 			} else {
 				fmt.Printf("  ✗ no relay at %s (run 'fleet relay start')\n", url)
 			}
-			backend := coordBackend(nil)
+			backend := resolvedBackend()
 			fmt.Printf("  backend: %s\n", backend)
 			if backend == backendDownload {
 				fmt.Printf("  binary: %s\n", relaymgr.BinPath())

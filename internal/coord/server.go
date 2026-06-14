@@ -54,8 +54,9 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		s.writeRaw(w, req.ID, map[string]any{})
 
 	case "notifications/initialized", "notifications/cancelled":
-		// JSON-RPC notifications carry no id and expect no result body.
-		w.WriteHeader(http.StatusOK)
+		// JSON-RPC notifications carry no id and expect no result body; the MCP
+		// streamable-HTTP transport answers them with 202 Accepted.
+		w.WriteHeader(http.StatusAccepted)
 
 	default:
 		s.writeRPCError(w, req.ID, rpcMethodNotFound, "method not supported: "+req.Method)

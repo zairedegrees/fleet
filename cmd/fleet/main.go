@@ -158,7 +158,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""), coordBackend(nil))
+	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""), resolvedBackend())
 	doctor.Print(checks)
 	return nil
 }

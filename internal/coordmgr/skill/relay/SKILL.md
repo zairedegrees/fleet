@@ -36,10 +36,12 @@ send_message(as: "backend", project: "my-app", to: "frontend", subject: "API rea
 ```
 
 If you are running standalone (not under fleet) and the tools show you
-unregistered, call `register_agent(name, project, role)` once. A re-register is a
-respawn: it updates role/description but **preserves** omitted identity fields
-(`profile_slug`, `reports_to`, `is_executive`, `session_id`) rather than clearing
-them.
+unregistered, call `register_agent(name, project, role)` once. Calling it again
+for the same name is a respawn: anything you leave out — `profile_slug`,
+`reports_to`, `is_executive`, `session_id` — keeps its previous value, and only
+the fields you pass (such as role) change. So a second register can never wipe
+identity an orchestrator set for you; pass a field explicitly when you do want to
+change it.
 
 ## Commands
 

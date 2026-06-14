@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -94,6 +95,38 @@ func TestEnsureRunningExternalIsNotManaged(t *testing.T) {
 	err := EnsureRunning("http://example.com/mcp", true)
 	if err == nil || !contains(err.Error(), "not auto-managed") {
 		t.Errorf("external unreachable should error, got %v", err)
+	}
+}
+
+// TestDefaultStartServerSpawnsCoordServe checks the real detached-child spawn
+// construction (via the runCmd seam): it must launch `<fleet> coord serve` and
+// record the pid, without an actual long-lived child.
+func TestDefaultStartServerSpawnsCoordServe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(pidPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldProbe := probe
+	probe = func(string) error { return fmt.Errorf("down") } // not reachable -> proceed to spawn
+	defer func() { probe = oldProbe }()
+
+	var gotArgs []string
+	oldRun := runCmd
+	runCmd = func(_ string, args ...string) *exec.Cmd {
+		gotArgs = args
+		return exec.Command("true") // harmless: Start() succeeds and exits
+	}
+	defer func() { runCmd = oldRun }()
+
+	if err := defaultStartServer("http://127.0.0.1:18099/mcp"); err != nil {
+		t.Fatalf("defaultStartServer: %v", err)
+	}
+	if len(gotArgs) != 2 || gotArgs[0] != "coord" || gotArgs[1] != "serve" {
+		t.Errorf("spawn args = %v, want [coord serve]", gotArgs)
+	}
+	if _, err := os.Stat(pidPath()); err != nil {
+		t.Errorf("pidfile not written: %v", err)
 	}
 }
 

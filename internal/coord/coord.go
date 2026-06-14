@@ -1,8 +1,9 @@
-// Package coord is fleet's native, embedded coordination core. It serves the
-// same MCP-over-HTTP wire contract as the wrai.th relay on the same localhost
-// endpoint, backed by a pure-Go SQLite store (modernc.org/sqlite, no CGO), so
-// fleet can coordinate agents without downloading or running a separate relay
-// binary. coord is MIT and shares no code with the AGPL wrai.th server.
+// Package coord is fleet's native, embedded coordination core. It is an
+// independent MIT reimplementation of the wrai.th relay's MCP-over-HTTP wire
+// contract — same endpoint, same request/response shapes — written from the wire
+// behavior, not its source. Backed by a pure-Go SQLite store
+// (modernc.org/sqlite, no CGO), it lets fleet coordinate agents without
+// downloading or running a separate relay binary.
 package coord
 
 import (
