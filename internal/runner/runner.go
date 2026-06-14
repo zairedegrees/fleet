@@ -27,11 +27,6 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 	var results []LaunchResult
 	project := cfg.Project.Name
 
-	claudeCmd := claudeBin
-	for _, f := range cfg.Claude.Flags {
-		claudeCmd += " " + f
-	}
-
 	for _, agent := range cfg.Agents {
 		res := LaunchResult{Agent: agent.Name}
 
@@ -59,6 +54,18 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 		}
 		time.Sleep(200 * time.Millisecond)
 
+		// Write the agent's persona to a file (no-op when it has none) and build
+		// its OWN launch line: per-agent model/permission/persona/tools. The
+		// persona prose stays in the file — only its path rides the command.
+		personaPath, err := writePersonaFile(project, agent)
+		if err != nil {
+			res.Error = fmt.Errorf("persona write failed: %w", err)
+			res.Action = "failed"
+			results = append(results, res)
+			continue
+		}
+
+		claudeCmd := BuildLaunch(claudeBin, cfg.Claude.Flags, agent, personaPath)
 		if err := SendKeys(project, agent.Name, claudeCmd); err != nil {
 			res.Error = fmt.Errorf("claude launch failed: %w", err)
 			res.Action = "failed"
