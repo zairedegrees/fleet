@@ -25,8 +25,15 @@ All notable changes to this project are documented here. The format is based on
 - The coordination backend is selectable: `--relay-backend embedded|download`,
   `FLEET_RELAY_BACKEND`, or the project's `relay_backend`. The downloaded AGPL
   `agent-relay` binary is now an explicit opt-in fallback.
-- `fleet relay start|stop|status` and `fleet --doctor` are backend-aware.
+- `fleet relay start|stop|status` and `fleet --doctor` are backend-aware, and
+  user-facing output drops the stale "wrai.th relay" label (now "coordination
+  core").
 - README and the `/fleet` onboarding skill updated for the built-in core.
+
+### Fixed
+- Install the `/relay` skill on every embedded launch, even when coord is already
+  running — it sat behind the reachability short-circuit, so a woken agent could
+  be left with no skill to resolve `/relay talk`.
 
 ## [0.1.0] — 2026-06-11
 
