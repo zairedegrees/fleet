@@ -31,6 +31,8 @@ var handlers = map[string]handlerFunc{
 	"send_message":     handleSendMessage,
 	"get_inbox":        handleGetInbox,
 	"mark_read":        handleMarkRead,
+	"set_memory":       handleSetMemory,
+	"get_memory":       handleGetMemory,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.

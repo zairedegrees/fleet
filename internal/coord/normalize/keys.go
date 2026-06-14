@@ -9,20 +9,20 @@ import (
 	"unicode"
 )
 
-// JSONKeys normalizes all keys in a JSON string from camelCase to snake_case.
-// If the input is not a JSON object or array, it is returned unchanged — opaque
-// values (e.g. a vault doc's raw markdown) pass through untouched.
+// JSONKeys normalizes all keys in a JSON object/array string from camelCase to
+// snake_case. If the input is not a JSON object or array, the ORIGINAL string is
+// returned byte-for-byte — opaque values (e.g. a vault doc's raw markdown) pass
+// through untouched, including any surrounding whitespace. (This is a deliberate
+// improvement over wrai.th, whose TrimSpace clips opaque values; JSON values
+// normalize identically.)
 func JSONKeys(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return s
-	}
-	if s[0] != '{' && s[0] != '[' {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return s
 	}
 
 	var raw any
-	if err := json.Unmarshal([]byte(s), &raw); err != nil {
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
 		return s
 	}
 

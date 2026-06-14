@@ -39,6 +39,25 @@ type Profile struct {
 	UpdatedAt    string  `json:"updated_at"`
 }
 
+type Memory struct {
+	ID           string  `json:"id"`
+	Key          string  `json:"key"`
+	Value        string  `json:"value"`
+	Tags         string  `json:"tags"`
+	Scope        string  `json:"scope"`
+	Project      string  `json:"project"`
+	AgentName    string  `json:"agent_name"`
+	Confidence   string  `json:"confidence"`
+	Version      int     `json:"version"`
+	Supersedes   *string `json:"supersedes,omitempty"`
+	ConflictWith *string `json:"conflict_with,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	ArchivedAt   *string `json:"archived_at,omitempty"`
+	ArchivedBy   *string `json:"archived_by,omitempty"`
+	Layer        string  `json:"layer"`
+}
+
 type Message struct {
 	ID             string  `json:"id"`
 	From           string  `json:"from"`
