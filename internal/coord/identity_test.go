@@ -55,6 +55,61 @@ func TestWhoamiSaltNotFound(t *testing.T) {
 	}
 }
 
+func TestWhoamiScansTailWindowOnly(t *testing.T) {
+	dir := t.TempDir()
+	big := strings.Repeat("filler line padding xxxxxxxxxxxxxxxxxxxxxxxxxxxx\n", 3000) // > 64KB
+
+	// File 1: salt only in the final line (inside the last-64KB window) -> found.
+	sid1 := "aaaaaaaa-0000-4000-8000-000000000001"
+	if err := os.WriteFile(filepath.Join(dir, sid1+".jsonl"), []byte(big+`{"c":"tail zzz-zebra-7777"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// File 2: salt only in the FIRST line, then > 64KB of filler -> before the
+	// window -> NOT found.
+	sid2 := "bbbbbbbb-0000-4000-8000-000000000002"
+	if err := os.WriteFile(filepath.Join(dir, sid2+".jsonl"), []byte(`{"c":"early before-window-9999"}`+"\n"+big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	old := claudeProjectsDir
+	claudeProjectsDir = func() string { return dir }
+	defer func() { claudeProjectsDir = old }()
+
+	s := New(newTestStore(t))
+	var found struct {
+		SessionID string `json:"session_id"`
+	}
+	decodePayload(t, mustCall(t, s, "whoami", map[string]any{"salt": "zzz-zebra-7777"}), &found)
+	if found.SessionID != sid1 {
+		t.Errorf("tail-window salt resolved to %q, want %q", found.SessionID, sid1)
+	}
+
+	r := callTool(t, s, "whoami", map[string]any{"salt": "before-window-9999"})
+	if !r.IsError || !strings.Contains(r.Content[0].Text, "not found") {
+		t.Errorf("pre-window salt should be not found, got isErr=%v %q", r.IsError, r.Content[0].Text)
+	}
+}
+
+func TestGetSessionContextDispatchedAndNoProfile(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "register_agent", map[string]any{"name": "w1", "project": "p"}) // no profile_slug
+	mustCall(t, s, "dispatch_task", map[string]any{"as": "w1", "project": "p", "profile": "other", "title": "do"})
+
+	var out struct {
+		Profile      *Profile `json:"profile"`
+		PendingTasks struct {
+			DispatchedByMe []Task `json:"dispatched_by_me"`
+		} `json:"pending_tasks"`
+	}
+	decodePayload(t, mustCall(t, s, "get_session_context", map[string]any{"as": "w1", "project": "p"}), &out)
+	if out.Profile != nil {
+		t.Errorf("agent without profile_slug should have nil profile, got %+v", out.Profile)
+	}
+	if len(out.PendingTasks.DispatchedByMe) != 1 {
+		t.Errorf("dispatched_by_me = %d, want 1", len(out.PendingTasks.DispatchedByMe))
+	}
+}
+
 func TestGetSessionContextBundles(t *testing.T) {
 	s := New(newTestStore(t))
 	mustCall(t, s, "register_profile", map[string]any{"slug": "worker", "name": "Worker", "project": "p"})

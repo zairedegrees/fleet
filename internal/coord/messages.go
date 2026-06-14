@@ -92,24 +92,18 @@ func (s *Store) sendMessage(project, from, to, msgType, subject, content, metada
 	return msg, nil
 }
 
-// inboxEntry is one row of the delivery-joined inbox query.
-type inboxEntry struct {
-	ID, From, To, Type, Subject, Content, CreatedAt, Priority string
-	Metadata                                                  string
-	ReplyTo, ConversationID, TaskID                           *string
-	DeliveryID, DeliveryState                                 string
-}
-
-// getInbox returns an agent's pending messages (delivery state queued/surfaced),
-// ordered by priority then recency, and surfaces the queued ones as a side
-// effect. The returned entries carry the pre-surface delivery state.
-func (s *Store) getInbox(project, agent string, unreadOnly bool, limit int) ([]inboxEntry, error) {
+// getInbox returns an agent's pending messages (delivery state queued/surfaced)
+// as full Message objects with the delivery id/state attached, ordered by
+// priority then recency, and surfaces the queued ones as a side effect. The
+// returned messages carry the pre-surface delivery state.
+func (s *Store) getInbox(project, agent string, unreadOnly bool, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 10
 	}
 
 	query := `SELECT m.id, m.from_agent, m.to_agent, m.reply_to, m.type, m.subject, m.content, m.metadata,
-	                 m.created_at, m.conversation_id, m.task_id, m.priority, d.id, d.state
+	                 m.created_at, m.read_at, m.conversation_id, m.project, m.task_id, m.priority, m.ttl_seconds, m.expired_at,
+	                 d.id, d.state
 	          FROM deliveries d JOIN messages m ON d.message_id = m.id
 	          WHERE d.project = ? AND d.to_agent = ? AND d.state IN ('queued', 'surfaced') AND m.expired_at IS NULL`
 	if unreadOnly {
@@ -121,18 +115,22 @@ func (s *Store) getInbox(project, agent string, unreadOnly bool, limit int) ([]i
 	if err != nil {
 		return nil, err
 	}
-	entries := []inboxEntry{}
+	msgs := []Message{}
 	var queuedIDs []string
 	for rows.Next() {
-		var e inboxEntry
-		if err := rows.Scan(&e.ID, &e.From, &e.To, &e.ReplyTo, &e.Type, &e.Subject, &e.Content, &e.Metadata,
-			&e.CreatedAt, &e.ConversationID, &e.TaskID, &e.Priority, &e.DeliveryID, &e.DeliveryState); err != nil {
+		var m Message
+		var deliveryID, deliveryState string
+		if err := rows.Scan(&m.ID, &m.From, &m.To, &m.ReplyTo, &m.Type, &m.Subject, &m.Content, &m.Metadata,
+			&m.CreatedAt, &m.ReadAt, &m.ConversationID, &m.Project, &m.TaskID, &m.Priority, &m.TTLSeconds, &m.ExpiredAt,
+			&deliveryID, &deliveryState); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		entries = append(entries, e)
-		if e.DeliveryState == "queued" {
-			queuedIDs = append(queuedIDs, e.DeliveryID)
+		m.DeliveryID = &deliveryID
+		m.DeliveryState = &deliveryState
+		msgs = append(msgs, m)
+		if deliveryState == "queued" {
+			queuedIDs = append(queuedIDs, deliveryID)
 		}
 	}
 	rows.Close()
@@ -154,7 +152,7 @@ func (s *Store) getInbox(project, agent string, unreadOnly bool, limit int) ([]i
 		}
 	}
 
-	return entries, nil
+	return msgs, nil
 }
 
 // markRead records read receipts and acknowledges the matching deliveries.
@@ -194,6 +192,9 @@ func handleSendMessage(s *Server, args map[string]any) (toolResult, error) {
 	if to == "" {
 		return resultError("to is required"), nil
 	}
+	if argString(args, "content") == "" {
+		return resultError("content is required"), nil
+	}
 	msg, err := s.store.sendMessage(
 		resolveProject(args),
 		resolveAgent(args),
@@ -228,19 +229,18 @@ func handleGetInbox(s *Server, args map[string]any) (toolResult, error) {
 	return resultText(map[string]any{"agent": agent, "count": len(entries), "messages": formatted})
 }
 
-// formatInboxEntries renders inbox rows for the wire. Content is truncated to
-// 300 chars unless fullContent (session_context wants the full text).
-func formatInboxEntries(entries []inboxEntry, fullContent bool) []map[string]any {
-	formatted := make([]map[string]any, len(entries))
-	for i, m := range entries {
+// formatInboxEntries renders inbox messages for the get_inbox wire (matching
+// wrai.th's entry keys). Content is truncated to 300 chars unless fullContent.
+func formatInboxEntries(msgs []Message, fullContent bool) []map[string]any {
+	formatted := make([]map[string]any, len(msgs))
+	for i, m := range msgs {
 		content := m.Content
 		if !fullContent && len(content) > 300 {
 			content = content[:300] + "..."
 		}
 		entry := map[string]any{
 			"id": m.ID, "from": m.From, "to": m.To, "type": m.Type,
-			"subject": m.Subject, "content": content, "created_at": m.CreatedAt,
-			"priority": m.Priority, "delivery_id": m.DeliveryID, "delivery_state": m.DeliveryState,
+			"subject": m.Subject, "content": content, "created_at": m.CreatedAt, "priority": m.Priority,
 		}
 		if m.ReplyTo != nil {
 			entry["reply_to"] = *m.ReplyTo
@@ -248,8 +248,11 @@ func formatInboxEntries(entries []inboxEntry, fullContent bool) []map[string]any
 		if m.ConversationID != nil {
 			entry["conversation_id"] = *m.ConversationID
 		}
-		if m.TaskID != nil {
-			entry["task_id"] = *m.TaskID
+		if m.DeliveryID != nil {
+			entry["delivery_id"] = *m.DeliveryID
+		}
+		if m.DeliveryState != nil {
+			entry["delivery_state"] = *m.DeliveryState
 		}
 		formatted[i] = entry
 	}

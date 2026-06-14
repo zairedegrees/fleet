@@ -1,6 +1,8 @@
 package coord
 
 import (
+	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -93,6 +95,46 @@ func TestTaskIDPrefixResolution(t *testing.T) {
 	decodePayload(t, mustCall(t, s, "claim_task", map[string]any{"as": "a", "project": "p", "task_id": id[:8]}), &claimed)
 	if claimed.ID != id || claimed.Status != "accepted" {
 		t.Fatalf("prefix resolution: got %s/%s", claimed.ID, claimed.Status)
+	}
+}
+
+func TestCompleteTaskNormalizesJSONResult(t *testing.T) {
+	s := New(newTestStore(t))
+	id := dispatchOne(t, s, "p", "w", "do")
+	mustCall(t, s, "start_task", map[string]any{"as": "a", "project": "p", "task_id": id})
+
+	var done Task
+	decodePayload(t, mustCall(t, s, "complete_task", map[string]any{"as": "a", "project": "p", "task_id": id, "result": `{"prUrl":"x","linesChanged":3}`}), &done)
+	if done.Result == nil {
+		t.Fatal("result is nil")
+	}
+	var r map[string]any
+	if err := json.Unmarshal([]byte(*done.Result), &r); err != nil {
+		t.Fatalf("result not JSON: %v", err)
+	}
+	if _, ok := r["pr_url"]; !ok {
+		t.Errorf("prUrl not snake_cased: %s", *done.Result)
+	}
+	if _, ok := r["lines_changed"]; !ok {
+		t.Errorf("linesChanged not snake_cased: %s", *done.Result)
+	}
+}
+
+func TestAmbiguousTaskPrefixIsError(t *testing.T) {
+	s := New(newTestStore(t))
+	// Two tasks sharing an 8-char prefix (inserted directly with crafted ids).
+	for _, id := range []string{"abcd1111-0000-4000-8000-000000000001", "abcd1111-0000-4000-8000-000000000002"} {
+		if err := s.store.write(func(tx *sql.Tx) error {
+			_, e := tx.Exec(`INSERT INTO tasks (id, profile_slug, dispatched_by, title, status, priority, project, dispatched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				id, "w", "x", "t", "pending", "P2", "p", nowMicro())
+			return e
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := callTool(t, s, "get_task", map[string]any{"project": "p", "task_id": "abcd1111"})
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "ambiguous") {
+		t.Errorf("ambiguous prefix should error, got isErr=%v %q", res.IsError, res.Content[0].Text)
 	}
 }
 

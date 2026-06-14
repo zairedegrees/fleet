@@ -41,9 +41,11 @@ func findActiveMemoryTx(tx *sql.Tx, project, scope, agentName, key string) (*Mem
 	case "global":
 		query = "SELECT " + memoryColumns + " FROM memories WHERE key = ? AND scope = 'global' AND archived_at IS NULL ORDER BY version DESC LIMIT 1"
 		args = []any{key}
-	default: // "project" (and any other treated as project-scoped)
-		query = "SELECT " + memoryColumns + " FROM memories WHERE key = ? AND scope = ? AND project = ? AND archived_at IS NULL ORDER BY version DESC LIMIT 1"
-		args = []any{key, scope, project}
+	case "project":
+		query = "SELECT " + memoryColumns + " FROM memories WHERE key = ? AND scope = 'project' AND project = ? AND archived_at IS NULL ORDER BY version DESC LIMIT 1"
+		args = []any{key, project}
+	default:
+		return nil, fmt.Errorf("invalid scope: %s", scope)
 	}
 	m, err := scanMemory(tx.QueryRow(query, args...))
 	if err == sql.ErrNoRows {

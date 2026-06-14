@@ -246,20 +246,36 @@ func (s *Store) getTask(taskID, project string) (*Task, error) {
 }
 
 // resolveTaskID accepts a full UUID or a unique prefix (agents often paste a
-// short id), returning the full id.
+// short id). An ambiguous prefix is an error — never guess at which task a
+// lifecycle move targets — matching wrai.th's refuse-on-collision behavior.
 func (s *Store) resolveTaskID(taskID, project string) (string, error) {
 	if len(taskID) >= 36 {
 		return taskID, nil
 	}
-	var id string
-	err := s.reader().QueryRow("SELECT id FROM tasks WHERE project = ? AND id LIKE ? ORDER BY dispatched_at LIMIT 1", project, taskID+"%").Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("task not found: %s", taskID)
-	}
+	rows, err := s.reader().Query("SELECT id FROM tasks WHERE project = ? AND id LIKE ?", project, taskID+"%")
 	if err != nil {
 		return "", err
 	}
-	return id, nil
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(ids) {
+	case 0:
+		return "", fmt.Errorf("task not found: %s", taskID)
+	case 1:
+		return ids[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous task ID prefix %q (%d matches)", taskID, len(ids))
+	}
 }
 
 // --- handlers ---

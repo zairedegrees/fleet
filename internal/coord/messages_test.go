@@ -146,7 +146,50 @@ func TestSendAndMarkReadValidation(t *testing.T) {
 	if res := callTool(t, s, "send_message", map[string]any{"as": "a", "project": "p", "content": "x"}); !res.IsError || !strings.Contains(res.Content[0].Text, "to is required") {
 		t.Errorf("send without to: isErr=%v %q", res.IsError, res.Content[0].Text)
 	}
+	if res := callTool(t, s, "send_message", map[string]any{"as": "a", "to": "b", "project": "p"}); !res.IsError || !strings.Contains(res.Content[0].Text, "content is required") {
+		t.Errorf("send without content: isErr=%v %q", res.IsError, res.Content[0].Text)
+	}
 	if res := callTool(t, s, "mark_read", map[string]any{"as": "b", "project": "p"}); !res.IsError || !strings.Contains(res.Content[0].Text, "message_ids or conversation_id") {
 		t.Errorf("mark_read without ids: isErr=%v %q", res.IsError, res.Content[0].Text)
+	}
+}
+
+func TestBroadcastDeliversToInactiveRecipient(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "register_agent", map[string]any{"name": "a", "project": "p"})
+	mustCall(t, s, "register_agent", map[string]any{"name": "b", "project": "p"})
+	mustCall(t, s, "deactivate_agent", map[string]any{"name": "b", "project": "p"}) // b -> inactive
+
+	mustCall(t, s, "send_message", map[string]any{"as": "a", "to": "*", "project": "p", "content": "hi"})
+
+	var o struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, mustCall(t, s, "get_inbox", map[string]any{"as": "b", "project": "p"}), &o)
+	if o.Count != 1 {
+		t.Errorf("inactive recipient broadcast count = %d, want 1 (status set is active/sleeping/inactive)", o.Count)
+	}
+}
+
+func TestMarkReadByNonRecipientDoesNotAckRecipient(t *testing.T) {
+	s := New(newTestStore(t))
+	var msg Message
+	decodePayload(t, mustCall(t, s, "send_message", map[string]any{"as": "a", "to": "b", "project": "p", "content": "x"}), &msg)
+
+	// 'c' never received this message: the read receipt inserts (count 1) but the
+	// ack is scoped to c's own deliveries, so b's delivery is untouched.
+	var o struct {
+		MarkedRead int `json:"marked_read"`
+	}
+	decodePayload(t, mustCall(t, s, "mark_read", map[string]any{"as": "c", "project": "p", "message_ids": []any{msg.ID}}), &o)
+	if o.MarkedRead != 1 {
+		t.Errorf("non-recipient mark_read = %d, want 1 (receipt inserts)", o.MarkedRead)
+	}
+	var inbox struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, mustCall(t, s, "get_inbox", map[string]any{"as": "b", "project": "p", "unread_only": false}), &inbox)
+	if inbox.Count != 1 {
+		t.Errorf("recipient inbox = %d, want 1 (a non-recipient's mark_read must not ack it)", inbox.Count)
 	}
 }

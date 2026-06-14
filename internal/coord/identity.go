@@ -63,14 +63,15 @@ func (s *Store) getAgentTasks(project, agent string) (assignedToMe, dispatchedBy
 	return assignedToMe, dispatchedByMe, nil
 }
 
-// listMemories returns the cross-scope memories relevant to an agent: global +
-// project-scope + the agent's own agent-scope, most recently updated first.
+// listMemories returns the memories the agent authored in this project (any
+// scope), most recently updated first — matching wrai.th's session_context
+// ListMemories(project, "", agent, ...) author-filter.
 func (s *Store) listMemories(project, agent string, limit int) ([]Memory, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	rows, err := s.reader().Query(
-		"SELECT "+memoryColumns+" FROM memories WHERE archived_at IS NULL AND (scope = 'global' OR (project = ? AND (scope = 'project' OR (scope = 'agent' AND agent_name = ?)))) ORDER BY updated_at DESC LIMIT ?",
+		"SELECT "+memoryColumns+" FROM memories WHERE archived_at IS NULL AND project = ? AND agent_name = ? ORDER BY updated_at DESC LIMIT ?",
 		project, agent, limit)
 	if err != nil {
 		return nil, err
@@ -108,11 +109,13 @@ func (s *Store) sessionContext(project, agent string, profileSlug *string) (map[
 		"dispatched_by_me": dispatched,
 	}
 
+	// Full Message objects (not the truncated get_inbox entry shape), matching
+	// wrai.th's buildSessionContext.
 	unread, err := s.getInbox(project, agent, true, 50)
 	if err != nil {
 		return nil, err
 	}
-	result["unread_messages"] = formatInboxEntries(unread, true)
+	result["unread_messages"] = unread
 
 	mems, err := s.listMemories(project, agent, 20)
 	if err != nil {

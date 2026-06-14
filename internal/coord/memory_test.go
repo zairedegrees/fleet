@@ -2,6 +2,7 @@ package coord
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/zairedegrees/fleet/internal/relay"
@@ -108,6 +109,38 @@ func TestMemoryScopeCascade(t *testing.T) {
 	decodePayload(t, mustCall(t, s, "get_memory", map[string]any{"as": "a", "project": "p", "key": "k"}), &out2)
 	if len(out2.Memories) != 1 || out2.Memories[0].Value != "A" {
 		t.Fatalf("cascade should now resolve to agent: %+v", out2)
+	}
+}
+
+func TestMemoryGlobalScopeAndCascadeFallthrough(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "set_memory", map[string]any{"as": "a", "project": "p", "key": "g", "value": "G", "scope": "global"})
+
+	// Explicit global scope.
+	var out struct {
+		Memories []Memory `json:"memories"`
+	}
+	decodePayload(t, mustCall(t, s, "get_memory", map[string]any{"as": "a", "project": "p", "key": "g", "scope": "global"}), &out)
+	if len(out.Memories) != 1 || out.Memories[0].Value != "G" {
+		t.Fatalf("global get: %+v", out)
+	}
+
+	// Cascade third hop: a different agent in a different project with no
+	// agent/project value falls through to global.
+	var out2 struct {
+		Memories []Memory `json:"memories"`
+	}
+	decodePayload(t, mustCall(t, s, "get_memory", map[string]any{"as": "other", "project": "q", "key": "g"}), &out2)
+	if len(out2.Memories) != 1 || out2.Memories[0].Value != "G" {
+		t.Fatalf("cascade should fall through to global: %+v", out2)
+	}
+}
+
+func TestSetMemoryInvalidScopeIsError(t *testing.T) {
+	s := New(newTestStore(t))
+	res := callTool(t, s, "set_memory", map[string]any{"as": "a", "project": "p", "key": "k", "value": "v", "scope": "weird"})
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "invalid scope") {
+		t.Errorf("invalid scope should error, got isErr=%v %q", res.IsError, res.Content[0].Text)
 	}
 }
 
