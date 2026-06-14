@@ -56,6 +56,31 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestRelayBackendRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "be.toml")
+	cfg := &FleetConfig{Project: ProjectConfig{Name: "p", RelayBackend: "embedded"}}
+	if err := Save(path, cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Project.RelayBackend != "embedded" {
+		t.Errorf("relay_backend did not round-trip: got %q", loaded.Project.RelayBackend)
+	}
+
+	// omitempty: an unset backend is not written and loads as "".
+	path2 := filepath.Join(t.TempDir(), "be2.toml")
+	if err := Save(path2, &FleetConfig{Project: ProjectConfig{Name: "p"}}); err != nil {
+		t.Fatal(err)
+	}
+	loaded2, _ := Load(path2)
+	if loaded2.Project.RelayBackend != "" {
+		t.Errorf("unset backend should load as empty, got %q", loaded2.Project.RelayBackend)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string

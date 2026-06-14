@@ -18,6 +18,10 @@ import (
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
+// fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
+// the release tag.
+const fleetVersion = "0.1.1"
+
 const defaultRelayURL = config.DefaultRelayURL
 
 // loadLastConfig is a seam over config.LoadLast so command behavior around a
@@ -45,13 +49,14 @@ var (
 )
 
 var (
-	flagLast     bool
-	flagKill     bool
-	flagKillAll  bool
-	flagStatus   bool
-	flagDoctor   bool
-	flagForce    bool
-	flagRelayURL string
+	flagLast         bool
+	flagKill         bool
+	flagKillAll      bool
+	flagStatus       bool
+	flagDoctor       bool
+	flagForce        bool
+	flagRelayURL     string
+	flagRelayBackend string
 )
 
 // resolveRelayURL is the single priority chain for relay URL resolution:
@@ -69,9 +74,10 @@ func resolveRelayURL(flagURL, configURL string) string {
 
 func main() {
 	root := &cobra.Command{
-		Use:   "fleet",
-		Short: "⚡ Launch multi-agent Claude Code fleets",
-		RunE:  run,
+		Use:     "fleet",
+		Short:   "⚡ Launch multi-agent Claude Code fleets",
+		Version: fleetVersion,
+		RunE:    run,
 	}
 
 	root.Flags().BoolVar(&flagLast, "last", false, "Relaunch last saved config")
@@ -81,6 +87,7 @@ func main() {
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
 	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
 	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")
+	root.PersistentFlags().StringVar(&flagRelayBackend, "relay-backend", "", "Coordination backend: embedded (in-binary coord) or download (AGPL agent-relay)")
 
 	dispatchCmd := &cobra.Command{
 		Use:   "dispatch [description]",
@@ -131,6 +138,7 @@ func main() {
 	root.AddCommand(stopCmd)
 
 	root.AddCommand(newRelayCmd())
+	root.AddCommand(newCoordCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -155,7 +163,7 @@ func run(cmd *cobra.Command, args []string) error {
 }
 
 func runDoctor() error {
-	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""))
+	checks := doctor.Run(resolveRelayURL(flagRelayURL, ""), resolvedBackend())
 	doctor.Print(checks)
 	return nil
 }
@@ -504,7 +512,7 @@ func launch(cfg *config.FleetConfig, save bool) error {
 		return err
 	}
 
-	if err := ensureRelaySetup(relayURL, flagRelayURL != ""); err != nil {
+	if err := ensureRelaySetup(relayURL, flagRelayURL != "", coordBackend(cfg)); err != nil {
 		fmt.Printf("  ✗ %v\n", err)
 		return err
 	}

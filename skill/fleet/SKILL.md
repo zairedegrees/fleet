@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Set up and launch a multi-agent Claude Code fleet for a project — first-run onboarding. Use when the user wants to set up fleet, create or launch their first fleet, onboard to fleet, or types /fleet. Claude drives: checks prerequisites, sets up the relay (with consent), proposes a tailored team, authors the config, and launches.
+description: Set up and launch a multi-agent Claude Code fleet for a project — first-run onboarding. Use when the user wants to set up fleet, create or launch their first fleet, onboard to fleet, or types /fleet. Claude drives: checks prerequisites, brings up the built-in coordination core, proposes a tailored team, authors the config, and launches.
 ---
 
 # Fleet Onboarding — 0 → first running fleet
@@ -16,13 +16,15 @@ Run `which fleet`. If it is missing, from the fleet repo build it:
 ## 1. Preflight: `fleet --doctor`
 
 Run `fleet --doctor`. It checks tmux, the Claude Code CLI, and iTerm2 (optional),
-each with an install hint, plus the relay (which fleet manages — see below).
-Resolve missing tools with the hints shown.
+each with an install hint, plus the coordination core (see below). Resolve
+missing tools with the hints shown.
 
-The relay is handled by fleet itself — no separate install. On the first launch,
-if no relay is running, fleet asks for consent, then downloads the agent-relay
-binary + the `/relay` skill and starts it locally. You do not run `agent-relay
-serve` by hand. (Point at an existing/shared relay with `fleet --relay-url <url>`.)
+Coordination is built into the fleet binary — there's nothing to install. On
+launch, fleet starts its native coordination core (`coord`) on `localhost:8090`
+automatically and installs the `/relay` skill; no download, no consent prompt.
+(Point at an external relay with `fleet --relay-url <url>`, or opt into the older
+downloaded AGPL relay with `fleet --relay-backend download`.) You do not run the
+server by hand.
 
 ## 2. Understand the project
 

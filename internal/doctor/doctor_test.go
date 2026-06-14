@@ -45,7 +45,7 @@ func TestCheckRelayOK(t *testing.T) {
 	srv := healthyRelay()
 	defer srv.Close()
 
-	c := checkRelay(srv.URL)
+	c := checkRelay(srv.URL, "download")
 	if c.Status != "ok" {
 		t.Fatalf("expected status ok, got %q (detail: %s)", c.Status, c.Detail)
 	}
@@ -58,7 +58,7 @@ func TestCheckRelayUnreachable(t *testing.T) {
 
 	// A fleet-managed relay is never a blocking prerequisite: an unreachable
 	// relay reports "ok" (fleet downloads/starts it on launch), not "error".
-	c := checkRelay(url)
+	c := checkRelay(url, "download")
 	if c.Status != "ok" {
 		t.Fatalf("expected status ok for an unreachable (fleet-managed) relay, got %q", c.Status)
 	}
@@ -66,9 +66,21 @@ func TestCheckRelayUnreachable(t *testing.T) {
 
 func TestCheckRelayReportsManagedWhenBinaryPresent(t *testing.T) {
 	// Unreachable but the managed binary exists → "managed by fleet", not a failure.
-	c := relayCheckFor(false /*reachable*/, true /*binaryPresent*/)
+	c := relayCheckFor(false /*reachable*/, true /*binaryPresent*/, "download")
 	if c.Status != "ok" || !strings.Contains(c.Detail, "managed") {
 		t.Errorf("expected managed-by-fleet ok, got %+v", c)
+	}
+}
+
+func TestCheckRelayEmbeddedBackend(t *testing.T) {
+	// Embedded backend, unreachable: honest "embedded coord" message, never the
+	// AGPL-download wording.
+	c := relayCheckFor(false /*reachable*/, false /*binaryPresent*/, "embedded")
+	if c.Status != "ok" || !strings.Contains(c.Detail, "embedded coord") {
+		t.Errorf("expected embedded-coord ok, got %+v", c)
+	}
+	if strings.Contains(c.Detail, "download") {
+		t.Errorf("embedded backend must not mention download: %q", c.Detail)
 	}
 }
 
@@ -116,14 +128,14 @@ func TestRunSkipsITerm2OffDarwin(t *testing.T) {
 	srv := healthyRelay()
 	defer srv.Close()
 
-	for _, c := range run(srv.URL, "linux") {
+	for _, c := range run(srv.URL, "download", "linux") {
 		if c.Name == "iTerm2" {
 			t.Fatal("iTerm2 check must be skipped on non-darwin platforms")
 		}
 	}
 
 	found := false
-	for _, c := range run(srv.URL, "darwin") {
+	for _, c := range run(srv.URL, "download", "darwin") {
 		if c.Name == "iTerm2" {
 			found = true
 		}
@@ -202,7 +214,7 @@ func TestCheckRelayDoesNotHang(t *testing.T) {
 	}()
 
 	done := make(chan Check, 1)
-	go func() { done <- checkRelay(srv.URL) }()
+	go func() { done <- checkRelay(srv.URL, "download") }()
 
 	select {
 	case c := <-done:

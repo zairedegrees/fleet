@@ -25,6 +25,10 @@ type ProjectConfig struct {
 	Name     string `toml:"name"`
 	RelayURL string `toml:"relay_url"`
 	Cwd      string `toml:"cwd"`
+	// RelayBackend selects the coordination backend: "embedded" (the native
+	// in-binary coord) or "download" (the AGPL agent-relay binary). Empty uses
+	// the built-in default.
+	RelayBackend string `toml:"relay_backend,omitempty"`
 }
 
 type ClaudeConfig struct {
