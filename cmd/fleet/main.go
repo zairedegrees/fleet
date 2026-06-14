@@ -131,6 +131,7 @@ func main() {
 	root.AddCommand(stopCmd)
 
 	root.AddCommand(newRelayCmd())
+	root.AddCommand(newCoordCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
