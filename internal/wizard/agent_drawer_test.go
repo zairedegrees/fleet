@@ -1,11 +1,43 @@
 package wizard
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zairedegrees/fleet/internal/config"
 )
+
+// Characterization: locks the drawer's field navigation order before the
+// table-driven refactor. tab must walk Name → Role → Color → Reports → Auto-talk
+// → Executive. (Pins the order independent of the save-count tests below.)
+func TestDrawerFieldNavigationOrder(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenCreate(nil, 0)
+	d, _ = driveDrawer(t, d, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+
+	tab := tea.KeyMsg{Type: tea.KeyTab}
+	want := []drawerField{dfRole, dfColor, dfReportsTo, dfAutoTalk, dfExecutive}
+	for i, w := range want {
+		d, _ = driveDrawer(t, d, tab)
+		if d.field != w {
+			t.Errorf("after %d tab(s), field = %d, want %d", i+1, d.field, w)
+		}
+	}
+}
+
+// Characterization: locks that View renders every field's label, so the
+// refactor's render loop can't silently drop one.
+func TestDrawerViewRendersAllFields(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenEdit(0, config.AgentConfig{Name: "dev", Color: "green", Role: "Lead"}, []string{"dev"})
+	v := d.View()
+	for _, label := range []string{"Name:", "Role:", "Color:", "Reports to:", "Auto-talk:", "Executive:"} {
+		if !strings.Contains(v, label) {
+			t.Errorf("drawer View is missing field label %q", label)
+		}
+	}
+}
 
 // driveDrawer feeds key messages through the drawer's Update loop and returns
 // the final drawer plus the DrawerSaveMsg if a save was emitted.
