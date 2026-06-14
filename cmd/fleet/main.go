@@ -18,6 +18,10 @@ import (
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
 
+// fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
+// the release tag.
+const fleetVersion = "0.1.1"
+
 const defaultRelayURL = config.DefaultRelayURL
 
 // loadLastConfig is a seam over config.LoadLast so command behavior around a
@@ -70,9 +74,10 @@ func resolveRelayURL(flagURL, configURL string) string {
 
 func main() {
 	root := &cobra.Command{
-		Use:   "fleet",
-		Short: "⚡ Launch multi-agent Claude Code fleets",
-		RunE:  run,
+		Use:     "fleet",
+		Short:   "⚡ Launch multi-agent Claude Code fleets",
+		Version: fleetVersion,
+		RunE:    run,
 	}
 
 	root.Flags().BoolVar(&flagLast, "last", false, "Relaunch last saved config")
