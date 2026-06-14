@@ -39,20 +39,20 @@ const (
 
 // AllPresets returns the 10 built-in team presets. Each agent is behaviorally
 // tuned (model + persona + skills + tool scope + permission posture) via
-// roleAgent; presets deviate from a role's default with withModel/withPerm/
-// asExecutive. Agents default to AutoTalk=false (stay idle until dispatched) to
-// honor the fleet's token discipline — the user opts an agent into the talk loop.
+// config.RoleAgent; presets deviate from a role's default with config.WithModel/
+// WithPerm/AsExecutive. Agents default to AutoTalk=false (stay idle until
+// dispatched) to honor the fleet's token discipline — opt an agent into talk.
 func AllPresets() []Preset {
 	return []Preset{
 		{
 			Name: "Web App",
 			Icon: "🌐",
 			Agents: []config.AgentConfig{
-				roleAgent("dev", "green", ""),
-				roleAgent("frontend", "orange", "dev"),
-				roleAgent("ux-designer", "blue", "dev"),
-				roleAgent("auditor", "red", "dev"),
-				roleAgent("ops", "purple", "dev"),
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("frontend", "orange", "dev"),
+				config.RoleAgent("ux-designer", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
+				config.RoleAgent("ops", "purple", "dev"),
 			},
 		},
 		{
@@ -60,45 +60,45 @@ func AllPresets() []Preset {
 			Icon: "⚙",
 			Agents: []config.AgentConfig{
 				// Sole lead judgement carries the design — give dev Opus here.
-				withModel(roleAgent("dev", "green", ""), "opus"),
-				roleAgent("auditor", "orange", "dev"),
-				roleAgent("ops", "blue", "dev"),
+				config.WithModel(config.RoleAgent("dev", "green", ""), "opus"),
+				config.RoleAgent("auditor", "orange", "dev"),
+				config.RoleAgent("ops", "blue", "dev"),
 			},
 		},
 		{
 			Name: "Data / ML",
 			Icon: "📊",
 			Agents: []config.AgentConfig{
-				roleAgent("dev", "green", ""),
-				roleAgent("researcher", "orange", "dev"),
-				roleAgent("quant", "blue", "dev"),
-				roleAgent("auditor", "red", "dev"),
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("researcher", "orange", "dev"),
+				config.RoleAgent("quant", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
 			},
 		},
 		{
 			Name: "Trading Bot",
 			Icon: "💰",
 			Agents: []config.AgentConfig{
-				roleAgent("dev", "green", ""),
+				config.RoleAgent("dev", "green", ""),
 				// Strategy work, but no live endpoints from this seat → default posture.
-				withPerm(roleAgent("quant", "orange", "dev"), "default"),
-				roleAgent("auditor", "blue", "dev"),
-				roleAgent("researcher", "purple", "dev"),
-				roleAgent("ops", "red", "dev"),
-				roleAgent("notifier", "pink", "dev"),
+				config.WithPerm(config.RoleAgent("quant", "orange", "dev"), "default"),
+				config.RoleAgent("auditor", "blue", "dev"),
+				config.RoleAgent("researcher", "purple", "dev"),
+				config.RoleAgent("ops", "red", "dev"),
+				config.RoleAgent("notifier", "pink", "dev"),
 			},
 		},
 		{
 			Name: "Full Stack",
 			Icon: "🚀",
 			Agents: []config.AgentConfig{
-				roleAgent("dev", "green", ""),
-				roleAgent("frontend", "orange", "dev"),
-				roleAgent("ux-designer", "blue", "dev"),
-				roleAgent("auditor", "red", "dev"),
-				roleAgent("ops", "purple", "dev"),
-				roleAgent("researcher", "pink", "dev"),
-				roleAgent("docs", "cyan", "dev"),
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("frontend", "orange", "dev"),
+				config.RoleAgent("ux-designer", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
+				config.RoleAgent("ops", "purple", "dev"),
+				config.RoleAgent("researcher", "pink", "dev"),
+				config.RoleAgent("docs", "cyan", "dev"),
 			},
 		},
 		{
@@ -106,8 +106,8 @@ func AllPresets() []Preset {
 			Icon: "⚡",
 			Agents: []config.AgentConfig{
 				// Tiny but high-quality: an Opus lead and an Opus reviewer.
-				withModel(roleAgent("dev", "green", ""), "opus"),
-				roleAgent("auditor", "orange", "dev"),
+				config.WithModel(config.RoleAgent("dev", "green", ""), "opus"),
+				config.RoleAgent("auditor", "orange", "dev"),
 			},
 		},
 		{
@@ -115,8 +115,8 @@ func AllPresets() []Preset {
 			Name: "Solo Pair",
 			Icon: "⚡⚡",
 			Agents: []config.AgentConfig{
-				roleAgent("dev", "green", ""),
-				roleAgent("auditor", "orange", "dev"),
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("auditor", "orange", "dev"),
 			},
 		},
 		{
@@ -124,10 +124,10 @@ func AllPresets() []Preset {
 			Name: "Design Studio",
 			Icon: "🎨",
 			Agents: []config.AgentConfig{
-				asExecutive(roleAgent("architect", "green", "")),
-				roleAgent("ux-designer", "orange", "architect"),
-				roleAgent("frontend", "blue", "architect"),
-				roleAgent("auditor", "red", "architect"),
+				config.AsExecutive(config.RoleAgent("architect", "green", "")),
+				config.RoleAgent("ux-designer", "orange", "architect"),
+				config.RoleAgent("frontend", "blue", "architect"),
+				config.RoleAgent("auditor", "red", "architect"),
 			},
 		},
 		{
@@ -135,10 +135,10 @@ func AllPresets() []Preset {
 			Name: "Security Hardening",
 			Icon: "🛡",
 			Agents: []config.AgentConfig{
-				asExecutive(roleAgent("architect", "green", "")),
-				roleAgent("security", "orange", "architect"),
-				roleAgent("auditor", "blue", "architect"),
-				roleAgent("dev", "red", "architect"),
+				config.AsExecutive(config.RoleAgent("architect", "green", "")),
+				config.RoleAgent("security", "orange", "architect"),
+				config.RoleAgent("auditor", "blue", "architect"),
+				config.RoleAgent("dev", "red", "architect"),
 			},
 		},
 		{

@@ -17,12 +17,12 @@ func personaFilePath(project, agent string) string {
 	return filepath.Join(config.FleetDir(), "personas", fmt.Sprintf("%s-%s.txt", project, agent))
 }
 
-// writePersonaFile writes an agent's persona to its file and returns the path,
+// WritePersonaFile writes an agent's persona to its file and returns the path,
 // for passing to --append-system-prompt-file. An agent with no persona writes
 // nothing and returns "" (the launch then omits the flag). The persona is
 // written verbatim as a file body — no escaping, since a file is not re-parsed
 // by any shell.
-func writePersonaFile(project string, a config.AgentConfig) (string, error) {
+func WritePersonaFile(project string, a config.AgentConfig) (string, error) {
 	if !a.HasPersona() {
 		return "", nil
 	}

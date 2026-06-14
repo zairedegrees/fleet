@@ -15,8 +15,14 @@ All notable changes to this project are documented here. The format is based on
   (written to `~/.fleet/personas/<project>-<agent>.txt`). The multiline persona
   never rides a `tmux send-keys` line — only its file path does — so quotes,
   `$`, backticks and newlines are inert. Tool allow-lists always re-include
-  `mcp__agent-relay__*` so a narrowed scope never breaks task routing. A
-  zero-behavioral agent launches byte-identically to v0.1.2.
+  `mcp__agent-relay__*` so a narrowed scope never breaks task routing.
+- **Personas ready for any project, out of the box.** At launch, an agent whose
+  name matches a known role (`dev`, `auditor`, `ops`, `frontend`, `ux-designer`,
+  `researcher`, `quant`, `architect`, `security`, `docs`, `notifier`) fills its
+  empty behavioral fields from that role's profile — so existing fleets get
+  ready-made personas with no config change. Explicit config values always win;
+  an agent named after no known role launches bare (byte-identical to v0.1.2).
+  The config on disk is never rewritten — defaults are resolved per launch.
 - **Behavioral preset library v2.** A canonical identity per role (model tier,
   persona, skills, tool scope, permission posture) backs all presets. The 7
   existing presets are tuned in place and three new ones ship — Solo Pair ⚡⚡

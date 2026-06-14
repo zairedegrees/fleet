@@ -50,7 +50,8 @@ func TestCreateSessionsLaunchesPerAgentBuildLaunch(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{Name: "auditor", Color: "red", Role: "Review", Model: "opus", PermissionMode: "plan",
 				Persona: "You are the auditor.\nSay \"no\" when unsure.", Tools: []string{"Read", "Grep"}},
-			{Name: "dev", Color: "green", Role: "Dev"},
+			// "worker" is not a known role, so it gets no defaults and stays bare.
+			{Name: "worker", Color: "green", Role: "Dev"},
 		},
 	}
 
@@ -60,22 +61,50 @@ func TestCreateSessionsLaunchesPerAgentBuildLaunch(t *testing.T) {
 		}
 	}
 
-	// Persona file written for the auditor, none for the zero-behavioral dev.
+	// Persona file written for the auditor, none for the zero-behavioral worker.
 	apath := personaFilePath("proj", "auditor")
 	if b, err := os.ReadFile(apath); err != nil || !strings.Contains(string(b), "You are the auditor.") {
 		t.Errorf("auditor persona file missing/wrong (%v)", err)
 	}
-	if _, err := os.Stat(personaFilePath("proj", "dev")); !os.IsNotExist(err) {
-		t.Errorf("dev (no persona) must have no persona file")
+	if _, err := os.Stat(personaFilePath("proj", "worker")); !os.IsNotExist(err) {
+		t.Errorf("worker (unknown role, no persona) must have no persona file")
 	}
 
-	wantAuditor := BuildLaunch(claudeBin, cfg.Claude.Flags, cfg.Agents[0], apath)
-	wantDev := BuildLaunch(claudeBin, cfg.Claude.Flags, cfg.Agents[1], "")
+	wantAuditor := BuildLaunch(claudeBin, cfg.Claude.Flags, config.ResolveDefaults(cfg.Agents[0]), apath)
+	wantWorker := BuildLaunch(claudeBin, cfg.Claude.Flags, cfg.Agents[1], "")
 	if !sentClaudeCmd(*calls, wantAuditor) {
 		t.Errorf("auditor launch line not sent; want %q\ncalls: %v", wantAuditor, *calls)
 	}
-	if !sentClaudeCmd(*calls, wantDev) {
-		t.Errorf("dev launch line not sent; want %q (must be byte-identical to v0.1.2)", wantDev)
+	if !sentClaudeCmd(*calls, wantWorker) {
+		t.Errorf("worker launch line not sent; want %q (unknown role must stay byte-identical to v0.1.2)", wantWorker)
+	}
+}
+
+// A bare agent named after a known role gets its persona/model/tools resolved at
+// launch — the "personas ready for any project" guarantee, without rewriting the
+// config on disk.
+func TestCreateSessionsResolvesRoleDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	calls := stubExecHasSession(t, false)
+
+	bare := config.AgentConfig{Name: "auditor", Color: "orange", Role: "Review"}
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: "/tmp/wd"},
+		Agents:  []config.AgentConfig{bare},
+	}
+	for _, r := range CreateSessions(cfg, claudeBin) {
+		if !r.Success {
+			t.Fatalf("agent %s failed: %v", r.Agent, r.Error)
+		}
+	}
+
+	apath := personaFilePath("proj", "auditor")
+	if b, err := os.ReadFile(apath); err != nil || !strings.Contains(string(b), "adversarial reviewer") {
+		t.Errorf("bare auditor must get the role persona written to disk (%v)", err)
+	}
+	want := BuildLaunch(claudeBin, nil, config.ResolveDefaults(bare), apath)
+	if !sentClaudeCmd(*calls, want) {
+		t.Errorf("bare auditor must launch with resolved defaults; want %q\ncalls: %v", want, *calls)
 	}
 }
 
@@ -104,7 +133,7 @@ func TestPersonaFilePath(t *testing.T) {
 
 func TestWritePersonaFileSkipsAgentWithoutPersona(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	path, err := writePersonaFile("proj", config.AgentConfig{Name: "dev"})
+	path, err := WritePersonaFile("proj", config.AgentConfig{Name: "dev"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +146,7 @@ func TestWritePersonaFileRoundTripsBytesLosslessly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	// Every character that the launch escaping is afraid of, including a newline.
 	persona := "You are the auditor.\nLoyalty is to correctness — say \"no\" when unsure.\nRun `go test`; check $PATH before you claim done."
-	path, err := writePersonaFile("proj", config.AgentConfig{Name: "auditor", Persona: persona})
+	path, err := WritePersonaFile("proj", config.AgentConfig{Name: "auditor", Persona: persona})
 	if err != nil {
 		t.Fatalf("write failed: %v", err)
 	}

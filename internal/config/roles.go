@@ -1,12 +1,11 @@
-package wizard
-
-import "github.com/zairedegrees/fleet/internal/config"
+package config
 
 // roleProfile is the canonical behavioral identity of an agent role: the model
-// tier it runs on, its permission posture, the persona prompt injected at
-// launch, and its default skills + tool scope. Presets and the wizard's
-// create-flow both fill an agent's behavioral fields from here, so a "dev" or an
-// "auditor" behaves consistently across every preset.
+// tier it runs on, its permission posture, the persona injected at launch, and
+// its default skills + tool scope. It lets a fleet ship ready-made personas for
+// the standard roles — presets seed from it (RoleAgent) and any launch fills an
+// agent's empty behavioral fields from it (ResolveDefaults), so an agent named
+// "dev" or "auditor" behaves consistently without anyone hand-writing a persona.
 type roleProfile struct {
 	role    string // the human Role description
 	model   string
@@ -100,36 +99,63 @@ Report findings ranked P0 to P3; the lead decides the merge — you flag, you do
 	},
 }
 
-// defaultModelForRole returns the model tier a role should run on, used to
-// pre-fill the wizard when an agent is created and to seed behavioral presets.
-// Unknown roles fall back to Sonnet, the safe builder default.
-func defaultModelForRole(role string) string {
+// DefaultModelForRole returns the model tier a role should run on, used to seed
+// presets and pre-fill the wizard. Unknown roles fall back to Sonnet.
+func DefaultModelForRole(role string) string {
 	if p, ok := roleProfiles[role]; ok {
 		return p.model
 	}
 	return "sonnet"
 }
 
-// roleAgent builds a fully behaviorally-tuned agent from its canonical role
-// (the agent name IS the role key). An unknown name still yields a usable agent
-// with the safe Sonnet default and an empty persona, so custom names never panic.
-func roleAgent(name, color, reportsTo string) config.AgentConfig {
+// ResolveDefaults fills an agent's EMPTY behavioral fields from the canonical
+// role profile keyed by its name, so a fleet ships ready-made personas for the
+// standard roles with no hand-authoring. Explicit values always win; an agent
+// whose name matches no known role is returned unchanged. Applied at LAUNCH
+// only — the saved config on disk is never rewritten.
+func ResolveDefaults(a AgentConfig) AgentConfig {
+	p, ok := roleProfiles[a.Name]
+	if !ok {
+		return a
+	}
+	if a.Role == "" {
+		a.Role = p.role
+	}
+	if a.Model == "" {
+		a.Model = p.model
+	}
+	if a.PermissionMode == "" {
+		a.PermissionMode = p.perm
+	}
+	if a.Persona == "" {
+		a.Persona = p.persona
+	}
+	if len(a.Skills) == 0 {
+		a.Skills = p.skills
+	}
+	if len(a.Tools) == 0 {
+		a.Tools = p.tools
+	}
+	return a
+}
+
+// RoleAgent builds a fully behaviorally-tuned agent from its canonical role (the
+// agent name IS the role key). An unknown name still yields a usable agent with
+// the safe Sonnet default and an empty persona, so custom names never panic.
+func RoleAgent(name, color, reportsTo string) AgentConfig {
 	p, ok := roleProfiles[name]
 	if !ok {
-		return config.AgentConfig{Name: name, Color: color, Role: name, ReportsTo: reportsTo, Model: "sonnet"}
+		return AgentConfig{Name: name, Color: color, Role: name, ReportsTo: reportsTo, Model: "sonnet"}
 	}
-	return config.AgentConfig{
+	return AgentConfig{
 		Name: name, Color: color, Role: p.role, ReportsTo: reportsTo,
 		Model: p.model, PermissionMode: p.perm, Persona: p.persona,
 		Skills: p.skills, Tools: p.tools,
 	}
 }
 
-// withModel / withPerm / asExecutive return a copy with one field overridden, so
+// WithModel / WithPerm / AsExecutive return a copy with one field overridden, so
 // a preset can deviate from a role's default without restating the whole agent.
-func withModel(a config.AgentConfig, model string) config.AgentConfig { a.Model = model; return a }
-func withPerm(a config.AgentConfig, perm string) config.AgentConfig {
-	a.PermissionMode = perm
-	return a
-}
-func asExecutive(a config.AgentConfig) config.AgentConfig { a.IsExecutive = true; return a }
+func WithModel(a AgentConfig, model string) AgentConfig { a.Model = model; return a }
+func WithPerm(a AgentConfig, perm string) AgentConfig   { a.PermissionMode = perm; return a }
+func AsExecutive(a AgentConfig) AgentConfig             { a.IsExecutive = true; return a }

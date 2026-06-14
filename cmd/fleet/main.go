@@ -365,10 +365,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Same per-agent builder as CreateSessions so the two launch sites can't
-	// drift. `fleet add` sets no persona, so the path is empty (byte-identical to
-	// a bare launch); future behavioral add-flags ride this for free.
-	claudeCmd := runner.BuildLaunch(claudeBin, cfg.Claude.Flags, agent, "")
+	// Resolve role defaults and build the launch line through the same builder as
+	// CreateSessions so the two sites can't drift — an agent added as `auditor`
+	// gets the auditor persona for free, written to its file (off the saved config).
+	launchAgent := config.ResolveDefaults(agent)
+	personaPath, err := runner.WritePersonaFile(project, launchAgent)
+	if err != nil {
+		return fmt.Errorf("failed to write persona: %w", err)
+	}
+	claudeCmd := runner.BuildLaunch(claudeBin, cfg.Claude.Flags, launchAgent, personaPath)
 
 	if err := runner.CreateSession(project, name, cfg.Project.Cwd); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)

@@ -30,6 +30,12 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 	for _, agent := range cfg.Agents {
 		res := LaunchResult{Agent: agent.Name}
 
+		// Fill empty behavioral fields from the agent's role so a fleet ships
+		// ready-made personas for the standard roles (dev, auditor, ops, …)
+		// without rewriting the config on disk. Explicit values always win; an
+		// unknown role name is left bare (byte-identical to v0.1.2).
+		agent = config.ResolveDefaults(agent)
+
 		if HasSession(project, agent.Name) {
 			fmt.Printf("  ✓ %s already running, skipping\n", SessionName(project, agent.Name))
 			res.Success = true
@@ -57,7 +63,7 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 		// Write the agent's persona to a file (no-op when it has none) and build
 		// its OWN launch line: per-agent model/permission/persona/tools. The
 		// persona prose stays in the file — only its path rides the command.
-		personaPath, err := writePersonaFile(project, agent)
+		personaPath, err := WritePersonaFile(project, agent)
 		if err != nil {
 			res.Error = fmt.Errorf("persona write failed: %w", err)
 			res.Action = "failed"
