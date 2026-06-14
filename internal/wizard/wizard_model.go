@@ -186,6 +186,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			names = append(names, item.agent.Name)
 		}
 		m.drawer.OpenEdit(msg.Index, m.agents.items[msg.Index].agent, names)
+		m.drawer.skipPerms = m.skipPerms
 		m.drawerOpen = true
 		m.agents.compressed = true
 		return m, nil
@@ -196,6 +197,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			names = append(names, item.agent.Name)
 		}
 		m.drawer.OpenCreate(names, len(m.agents.items))
+		m.drawer.skipPerms = m.skipPerms
 		m.drawerOpen = true
 		m.agents.compressed = true
 		return m, nil

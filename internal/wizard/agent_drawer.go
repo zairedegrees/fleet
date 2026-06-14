@@ -134,6 +134,11 @@ type agentDrawer struct {
 	mode      drawerMode // drawerEdit or drawerCreate
 	editIndex int        // index of agent being edited, -1 for new
 	title     string
+
+	// skipPerms mirrors the fleet-wide --dangerously-skip-permissions stance. When
+	// set it overrides every per-agent permission_mode, so the drawer renders the
+	// Permission row disabled rather than showing a posture it won't honor.
+	skipPerms bool
 }
 
 func newAgentDrawer() agentDrawer {
@@ -499,6 +504,10 @@ func (d agentDrawer) View() string {
 			}
 		case kindSelect:
 			sb.WriteString(label)
+			if spec.id == dfPermission && d.skipPerms {
+				sb.WriteString(dimStyle.Render("(fleet skip-all on — per-agent posture ignored)") + "\n")
+				continue
+			}
 			opts, sel := d.selectState(spec.id)
 			for i, opt := range opts {
 				if i == sel {

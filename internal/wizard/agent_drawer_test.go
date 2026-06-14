@@ -153,6 +153,24 @@ func TestDrawerSetModelAndPermission(t *testing.T) {
 	}
 }
 
+// When the fleet-wide skip-all flag is on it overrides every per-agent
+// permission_mode, so the drawer must say so instead of showing a posture it
+// won't honor (a safety-lie hazard).
+func TestDrawerPermissionDisabledUnderSkipAll(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenEdit(0, config.AgentConfig{Name: "dev", Color: "green", Role: "Lead", PermissionMode: "plan"}, []string{"dev"})
+	d.skipPerms = true
+	withSkip := d.View()
+	if !strings.Contains(withSkip, "skip-all") {
+		t.Errorf("permission row must show the skip-all override note, got:\n%s", withSkip)
+	}
+
+	d.skipPerms = false
+	if strings.Contains(d.View(), "skip-all") {
+		t.Error("without skip-all, the permission row must not show the override note")
+	}
+}
+
 // The persona field is a textarea: Enter inserts a newline (does NOT advance),
 // and the multiline value is written to the saved agent. If Enter advanced
 // instead, "line2" would land on the next field and Persona would be "line1".
