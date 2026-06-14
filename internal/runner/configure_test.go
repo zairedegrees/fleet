@@ -134,6 +134,25 @@ func TestBuildConfigureScriptKeepsRenameAndColor(t *testing.T) {
 	}
 }
 
+// The first command after the prompt appears must be preceded by a settle: a
+// freshly-booted pane shows the ❯ prompt while Claude Code is still initializing
+// (MCP servers, skills), so the first keystrokes are dropped. Without the settle
+// the /rename silently vanishes while the later /color survives.
+func TestBuildConfigureScriptSettlesBeforeFirstCommand(t *testing.T) {
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
+		Agents:  []config.AgentConfig{{Name: "dev", Color: "green"}},
+	}
+	session := SessionName("proj", "dev")
+
+	script := buildConfigureScript(cfg, "/tmp/x.log")
+
+	want := "if wait_prompt " + session + " 90; then\n  sleep 3\n  tmux send-keys -t " + session + " '/rename dev' Enter"
+	if !strings.Contains(script, want) {
+		t.Errorf("configure script must settle after wait_prompt before the first command (else /rename is dropped); got:\n%s", script)
+	}
+}
+
 // For an AutoTalk agent the identity preamble (prose, normal Enter) must be sent
 // BEFORE /relay talk so the woken agent knows who it is and polls correctly
 // without ever registering. For an idle agent neither the preamble nor talk appear.

@@ -200,6 +200,10 @@ func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 
 		script.WriteString(fmt.Sprintf("# Configure %s\n", agent.Name))
 		script.WriteString(fmt.Sprintf("if wait_prompt %s 90; then\n", session))
+		// A freshly-booted pane shows the ❯ prompt while Claude Code is still
+		// initializing (loading MCP servers + skills), and drops the first
+		// keystrokes. Settle before the first command so /rename isn't swallowed.
+		script.WriteString("  sleep 3\n")
 		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/rename %s' Enter\n", session, agent.Name))
 		script.WriteString("  sleep 2\n")
 		script.WriteString(fmt.Sprintf("  tmux send-keys -t %s '/color %s' Enter\n", session, agent.Color))
