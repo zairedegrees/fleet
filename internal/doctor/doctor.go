@@ -88,7 +88,7 @@ func checkClaude() Check {
 // never a blocking prerequisite, so every case is "ok" (valid Status values are
 // "ok"/"missing"/"error") — only the Detail differs.
 func relayCheckFor(reachable, binaryPresent bool, backend string) Check {
-	c := Check{Name: "wrai.th relay", Status: "ok"}
+	c := Check{Name: "coordination core", Status: "ok"}
 	switch {
 	case reachable:
 		c.Detail = "reachable"

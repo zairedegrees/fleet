@@ -115,7 +115,7 @@ func defaultAskConsent(url string) bool {
 }
 
 func newRelayCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "relay", Short: "Manage the fleet-bundled wrai.th relay"}
+	cmd := &cobra.Command{Use: "relay", Short: "Manage the coordination backend (embedded coord or downloaded relay)"}
 	cmd.AddCommand(&cobra.Command{
 		Use:   "start",
 		Short: "Start the coordination backend (embedded coord, or the downloaded relay)",
