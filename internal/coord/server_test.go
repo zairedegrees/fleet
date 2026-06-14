@@ -87,7 +87,7 @@ func TestUnknownMethodIsMethodNotFound(t *testing.T) {
 
 	// An unknown METHOD (vs an unknown tool) uses the JSON-RPC error channel, not
 	// the tool-error result — these two paths must not be confused.
-	res, b := postMCP(t, h, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	res, b := postMCP(t, h, `{"jsonrpc":"2.0","id":1,"method":"resources/list","params":{}}`)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}
