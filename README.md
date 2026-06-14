@@ -8,7 +8,7 @@
 
 **Launch and orchestrate multi-agent Claude Code fleets from one command.**
 
-`fleet` is a Go CLI and TUI that spins up a team of Claude Code agents, each in its own tmux session, lays them out in an iTerm2 grid, and coordinates them through the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) MCP relay. One operator drives many agents: dispatch a task to any agent, stream its terminal, add or stop workers on the fly.
+`fleet` is a Go CLI and TUI that spins up a team of Claude Code agents, each in its own tmux session, lays them out in an iTerm2 grid, and coordinates them through a built-in MCP coordination core (no separate relay to install). One operator drives many agents: dispatch a task to any agent, stream its terminal, add or stop workers on the fly.
 
 ![An eight-agent fleet in an iTerm2 grid, each Claude Code agent color-coded by role](docs/fleet-grid.png)
 
@@ -77,15 +77,17 @@ Run `fleet --doctor` to verify and get install hints.
 | tmux | one session per agent | `brew install tmux` |
 | Claude Code CLI | the agents themselves | `npm install -g @anthropic-ai/claude-code` |
 | iTerm2 | grid layout (optional, falls back to tmux) | `brew install --cask iterm2` |
-| wrai.th relay | agent registry, profiles, task dispatch | managed by fleet (auto-downloaded) |
+| coordination core | agent registry, profiles, task dispatch | built into fleet (native, MIT) |
 
-### The relay (managed for you)
+### The coordination core (built in)
 
-fleet coordinates agents through a [wrai.th](https://github.com/Synergix-lab/WRAI.TH) MCP relay, but you don't install it separately: on first launch fleet asks for consent, then downloads the `agent-relay` binary and the `/relay` skill into `~/.fleet` and `~/.claude/skills`, and runs it on `localhost:8090`. Manage it with `fleet relay start|stop|status`, or point at your own with `fleet --relay-url <url>`.
+fleet ships its own coordination core — `internal/coord`, a small MCP-over-HTTP server backed by pure-Go SQLite (no CGO) — and starts it on `localhost:8090` automatically. There's nothing to install, download, or consent to: it's compiled into the binary and runs as a detached child that outlives the launch. Manage it with `fleet relay start|stop|status`, or point at an external relay with `fleet --relay-url <url>`.
 
-> **Licensing:** `agent-relay` is AGPL-3.0; fleet (MIT) does not bundle or redistribute it — it is downloaded on your behalf, with your consent, from wrai.th's own releases.
+coord is an independent MIT reimplementation of the [wrai.th](https://github.com/Synergix-lab/WRAI.TH) relay's MCP wire contract — same endpoint, same tools — written from the wire behavior, not its source. The AGPL `agent-relay` binary therefore stays available as an opt-in fallback: `fleet --relay-backend download` (or `FLEET_RELAY_BACKEND=download`) downloads and runs it, with consent, from wrai.th's releases.
 
-> **Recommended:** a relay build with *preserve-omitted re-registration* (it keeps an agent's `profile_slug` when the agent re-registers without it). fleet works against any relay — it registers agents server-side and never self-registers destructively — but on an older relay an agent that re-registers on its own could drop its slug and stop receiving dispatched tasks. Newer relays close that edge.
+> **Licensing:** coord and the bundled `/relay` skill are MIT and ship in this repo. fleet bundles no AGPL code; the AGPL `agent-relay` is only ever downloaded on your behalf when you explicitly opt into the `download` backend.
+
+> **Re-registration safety:** fleet registers each agent server-side at launch and agents never self-register, so an agent can't wipe its own `profile_slug` and break task routing. coord also preserves omitted identity fields on any re-register.
 
 ## Usage
 
@@ -116,8 +118,10 @@ cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, relay,
 internal/wizard      Bubble Tea TUI: project panel, agent panel, presets, drawer
 internal/scanner     tech-stack detection, agent suggestions
 internal/runner      tmux sessions, iTerm2 grid, async agent config, .mcp.json provisioning
-internal/relaymgr    downloads, starts, and lifecycle-manages the bundled relay
-internal/relay       wrai.th MCP HTTP client (list, dispatch, profiles, vault)
+internal/coord       native coordination core: MCP-over-HTTP server + pure-Go SQLite store (default)
+internal/coordmgr    runs coord as a detached child; selects the embedded vs. downloaded backend
+internal/relaymgr    downloads + lifecycle-manages the AGPL agent-relay binary (opt-in fallback)
+internal/relay       MCP HTTP client (list, dispatch, profiles, vault)
 internal/config      TOML config, validation, last-run persistence
 internal/doctor      prerequisite checks with install hints
 internal/term        sanitizes relay-sourced strings before terminal output

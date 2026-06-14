@@ -17,10 +17,10 @@ import (
 const (
 	backendEmbedded = "embedded"
 	backendDownload = "download"
-	// defaultBackend is used when nothing overrides it. It stays "download"
-	// during the coord rollout so existing setups keep using the prebuilt binary;
-	// flip to backendEmbedded once the embedded core is validated end-to-end.
-	defaultBackend = backendDownload
+	// defaultBackend is used when nothing overrides it: the native in-binary coord
+	// (MIT, no download). The AGPL agent-relay binary remains available as an
+	// explicit opt-in via --relay-backend download / FLEET_RELAY_BACKEND=download.
+	defaultBackend = backendEmbedded
 )
 
 // seams for testing
