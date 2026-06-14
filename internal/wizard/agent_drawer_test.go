@@ -84,7 +84,7 @@ func TestDrawerFieldNavigationOrder(t *testing.T) {
 	d.OpenCreate(nil, 0)
 	d, _ = driveDrawer(t, d, typeRunes("x"))
 
-	want := []drawerField{dfRole, dfColor, dfReportsTo, dfModel, dfPermission, dfAutoTalk, dfExecutive}
+	want := []drawerField{dfRole, dfPersona, dfColor, dfReportsTo, dfModel, dfPermission, dfAutoTalk, dfExecutive}
 	for i, w := range want {
 		d, _ = driveDrawer(t, d, keyTab)
 		if d.field != w {
@@ -99,7 +99,7 @@ func TestDrawerViewRendersAllFields(t *testing.T) {
 	d := newAgentDrawer()
 	d.OpenEdit(0, config.AgentConfig{Name: "dev", Color: "green", Role: "Lead"}, []string{"dev"})
 	v := d.View()
-	for _, label := range []string{"Name:", "Role:", "Color:", "Reports to:", "Model:", "Permission:", "Auto-talk:", "Executive:"} {
+	for _, label := range []string{"Name:", "Role:", "Persona:", "Color:", "Reports to:", "Model:", "Permission:", "Auto-talk:", "Executive:"} {
 		if !strings.Contains(v, label) {
 			t.Errorf("drawer View is missing field label %q", label)
 		}
@@ -150,6 +150,28 @@ func TestDrawerSetModelAndPermission(t *testing.T) {
 	}
 	if saved.Agent.PermissionMode != "plan" {
 		t.Errorf("selected permission = %q, want plan", saved.Agent.PermissionMode)
+	}
+}
+
+// The persona field is a textarea: Enter inserts a newline (does NOT advance),
+// and the multiline value is written to the saved agent. If Enter advanced
+// instead, "line2" would land on the next field and Persona would be "line1".
+func TestDrawerPersonaMultilineEditing(t *testing.T) {
+	d := newAgentDrawer()
+	d.OpenCreate(nil, 0)
+
+	flow := concat(
+		[]tea.Msg{typeRunes("dev")},
+		tabsTo(dfPersona), // name -> role -> persona
+		[]tea.Msg{typeRunes("line1"), keyEnter, typeRunes("line2")},
+		tabsFrom(dfPersona), // persona -> ... -> save
+	)
+	_, saved := driveDrawer(t, d, flow...)
+	if saved == nil {
+		t.Fatal("expected a DrawerSaveMsg")
+	}
+	if saved.Agent.Persona != "line1\nline2" {
+		t.Errorf("persona = %q, want %q (Enter must insert a newline, not advance)", saved.Agent.Persona, "line1\nline2")
 	}
 }
 
