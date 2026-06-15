@@ -593,10 +593,29 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	} else {
 		fmt.Printf("\n  ✅ Fleet launched. %d/%d sessions created.\n", success, len(cfg.Agents))
 	}
-	fmt.Print("  Agents configuring in background (watch iTerm2 panes).\n")
+	fmt.Print(launchSummary(cfg))
 	if logPath != "" {
 		fmt.Printf("  Config log: %s\n", logPath)
 	}
 	fmt.Println()
 	return launchErr
+}
+
+// launchSummary explains the post-launch posture: agents register, take their
+// role, then go quiet (token discipline). Counts come from the in-memory config
+// — coord has only just started, so this is intentionally not a live query.
+func launchSummary(cfg *config.FleetConfig) string {
+	autoTalk := 0
+	for _, a := range cfg.Agents {
+		if a.AutoTalk {
+			autoTalk++
+		}
+	}
+	onDemand := len(cfg.Agents) - autoTalk
+	var b strings.Builder
+	b.WriteString("  Agents are registering and taking their roles, then they go quiet (token discipline).\n")
+	fmt.Fprintf(&b, "    %d greet at boot (auto-talk) · %d on-demand\n", autoTalk, onDemand)
+	b.WriteString("  Give them work:   fleet dispatch --to <agent> \"<task>\"\n")
+	b.WriteString("  See who's idle:   fleet --status\n")
+	return b.String()
 }

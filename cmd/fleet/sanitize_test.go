@@ -3,13 +3,14 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAgentLineSanitizesRelayName(t *testing.T) {
 	// A ghost agent whose relay-sourced name carries an OSC title-set sequence
 	// must not reach the terminal raw via `fleet status`.
 	evil := "ghost" + string(rune(0x1b)) + "]0;pwned" + string(rune(0x07))
-	line := agentLine(agentStatus{Agent: evil, RelayState: "inactive", Tasks: 0})
+	line := agentLine(agentStatus{Agent: evil, RelayState: "inactive", Tasks: 0}, time.Time{})
 	if strings.ContainsRune(line, 0x1b) || strings.ContainsRune(line, 0x07) {
 		t.Fatalf("agentLine leaked a control character: %q", line)
 	}

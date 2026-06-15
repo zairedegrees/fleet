@@ -31,6 +31,8 @@ type agentStatus struct {
 	RelayState string // relay status, "unregistered", "?" (unknown project), or "" when relay is down
 	Tasks      int
 	HasSession bool
+	AutoTalk   bool   // config posture: greets at boot vs woken on demand
+	LastSeen   string // relay last_seen (RFC3339), "" when unknown
 }
 
 type projectStatus struct {
@@ -87,7 +89,7 @@ func runStatus() error {
 		fmt.Println("  No fleet sessions running.")
 		return nil
 	}
-	fmt.Print(renderStatus(projects, len(sessions), warning))
+	fmt.Print(renderStatus(projects, len(sessions), warning, time.Now()))
 	return nil
 }
 
@@ -164,7 +166,7 @@ func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL, o
 		if relayUp {
 			tasks = fetchTaskCounts(client, project, relayAgents)
 		}
-		merged := mergeAgents(project, grouped[project], relayAgents, tasks, relayUp)
+		merged := mergeAgents(project, grouped[project], relayAgents, tasks, postureFor(project, configs), relayUp)
 		if len(merged) == 0 {
 			continue
 		}
@@ -212,9 +214,10 @@ func fetchTaskCounts(client relayQuerier, project string, agents []relay.Agent) 
 }
 
 // mergeAgents unions the tmux sessions of a project with its relay-registered
-// agents: sessions keep tmux as the liveness signal, the relay provides state
-// and workload, and relay-only agents surface as ghosts without a session.
-func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, tasks map[string]int, relayUp bool) []agentStatus {
+// agents: sessions keep tmux as the liveness signal, the relay provides state,
+// workload and last_seen, and relay-only agents surface as ghosts. posture maps
+// agent name → auto_talk from the saved config, so status can label posture.
+func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, tasks map[string]int, posture map[string]bool, relayUp bool) []agentStatus {
 	byName := make(map[string]relay.Agent, len(relayAgents))
 	for _, a := range relayAgents {
 		byName[a.Name] = a
@@ -225,10 +228,11 @@ func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, t
 	for _, s := range sessions {
 		name := runner.AgentFromSession(project, s)
 		seen[name] = true
-		st := agentStatus{Session: s, Agent: name, Tasks: -1, HasSession: true}
+		st := agentStatus{Session: s, Agent: name, Tasks: -1, HasSession: true, AutoTalk: posture[name]}
 		if relayUp {
 			if a, ok := byName[name]; ok {
 				st.RelayState = a.Status
+				st.LastSeen = a.LastSeen
 				if n, ok := tasks[name]; ok {
 					st.Tasks = n
 				}
@@ -242,7 +246,7 @@ func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, t
 		if seen[a.Name] {
 			continue
 		}
-		st := agentStatus{Agent: a.Name, RelayState: a.Status, Tasks: -1}
+		st := agentStatus{Agent: a.Name, RelayState: a.Status, LastSeen: a.LastSeen, Tasks: -1, AutoTalk: posture[a.Name]}
 		if n, ok := tasks[a.Name]; ok {
 			st.Tasks = n
 		}
@@ -251,9 +255,25 @@ func mergeAgents(project string, sessions []string, relayAgents []relay.Agent, t
 	return out
 }
 
+// postureFor maps each agent name in a project's saved config to its auto_talk
+// posture, so status can label agents auto-talk vs on-demand. Returns nil when
+// the project has no saved config (posture then defaults to on-demand/false).
+func postureFor(project string, configs []*config.FleetConfig) map[string]bool {
+	for _, c := range configs {
+		if c.Project.Name == project {
+			m := make(map[string]bool, len(c.Agents))
+			for _, a := range c.Agents {
+				m[a.Name] = a.AutoTalk
+			}
+			return m
+		}
+	}
+	return nil
+}
+
 // renderStatus is pure (data in → string out) so the display logic is testable
-// without tmux or a relay.
-func renderStatus(projects []projectStatus, sessionCount int, relayWarning string) string {
+// without tmux or a relay. now drives the "seen Xm ago" segments.
+func renderStatus(projects []projectStatus, sessionCount int, relayWarning string, now time.Time) string {
 	var b strings.Builder
 	if relayWarning != "" {
 		fmt.Fprintf(&b, "  ⚠ %s\n\n", term.Sanitize(relayWarning))
@@ -262,28 +282,99 @@ func renderStatus(projects []projectStatus, sessionCount int, relayWarning strin
 	for _, p := range projects {
 		fmt.Fprintf(&b, "    [%s]\n", term.Sanitize(p.Project))
 		for _, a := range p.Agents {
-			fmt.Fprintf(&b, "      %s\n", agentLine(a))
+			fmt.Fprintf(&b, "      %s\n", agentLine(a, now))
 		}
 		b.WriteString("\n")
+	}
+	if hasIdle(projects) {
+		b.WriteString("  idle = registered, in standby (token discipline). Wake: fleet dispatch --to <agent> \"<task>\"\n")
 	}
 	return b.String()
 }
 
-func agentLine(a agentStatus) string {
-	label := a.Session
-	if label == "" {
-		label = a.Agent
+// hasIdle reports whether any agent derives to the idle state, so the legend
+// only appears when it explains something on screen.
+func hasIdle(projects []projectStatus) bool {
+	for _, p := range projects {
+		for _, a := range p.Agents {
+			if deriveOpState(a.RelayState, a.Tasks) == "idle" {
+				return true
+			}
+		}
 	}
-	label = term.Sanitize(label)
+	return false
+}
+
+// deriveOpState turns the relay's registration state + task count into an
+// operator-facing word. "active" is a registration flag, not a liveness signal:
+// an active agent with zero tasks is in standby, which we surface as "idle". An
+// unknown task count (-1) must never render as idle — it becomes "registered"
+// and the task segment shows "tasks: ?".
+func deriveOpState(relayState string, tasks int) string {
+	if relayState != "active" {
+		return relayState
+	}
+	switch {
+	case tasks < 0:
+		return "registered"
+	case tasks == 0:
+		return "idle"
+	default:
+		return "working"
+	}
+}
+
+// relativeTime renders an RFC3339 timestamp (the format coord writes last_seen
+// in) as a compact "Xs/Xm/Xh/Xd ago" relative to now. Empty or unparsable input
+// yields "" so the caller omits the segment; a future time (clock skew) clamps
+// to "just now".
+func relativeTime(lastSeen string, now time.Time) string {
+	if lastSeen == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, lastSeen)
+	if err != nil {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d < 0:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+func agentLine(a agentStatus, now time.Time) string {
+	label := term.Sanitize(a.Agent)
 	var parts []string
 	if a.RelayState != "" {
-		parts = append(parts, "relay: "+a.RelayState)
-		if a.RelayState != "unregistered" && a.RelayState != relayStateUnknown {
-			if a.Tasks >= 0 {
-				parts = append(parts, fmt.Sprintf("%d task(s)", a.Tasks))
+		parts = append(parts, deriveOpState(a.RelayState, a.Tasks))
+		// Posture is known only for registered ("active") agents.
+		if a.RelayState == "active" {
+			if a.AutoTalk {
+				parts = append(parts, "auto-talk")
 			} else {
+				parts = append(parts, "on-demand")
+			}
+		}
+		// Task detail: ">=1" shows the count (idle/0 is already conveyed by the
+		// state word); a registered agent with an unknown count is honest "?".
+		if a.RelayState != "unregistered" && a.RelayState != relayStateUnknown {
+			if a.Tasks >= 1 {
+				parts = append(parts, fmt.Sprintf("%d task(s)", a.Tasks))
+			} else if a.Tasks < 0 {
 				parts = append(parts, "tasks: ?")
 			}
+		}
+		if seen := relativeTime(a.LastSeen, now); seen != "" {
+			parts = append(parts, "seen "+seen)
 		}
 	}
 	if !a.HasSession {

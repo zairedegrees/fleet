@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+func TestAgentParsesLastSeen(t *testing.T) {
+	// Shape coord's list_agents returns for one agent.
+	raw := `{"name":"dev","role":"backend","status":"active","profile_slug":"dev","last_seen":"2026-06-15T02:17:50Z"}`
+	var a Agent
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if a.LastSeen != "2026-06-15T02:17:50Z" {
+		t.Errorf("LastSeen not parsed, got %q", a.LastSeen)
+	}
+}
+
 func TestListAgents(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		agentsJSON := `{"agents":[{"name":"ops","role":"monitor","status":"active"},{"name":"quant","role":"analyst","status":"inactive"}],"count":2}`
