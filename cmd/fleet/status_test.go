@@ -416,12 +416,13 @@ func TestRenderStatusUnknownRelayState(t *testing.T) {
 func TestMergeAgentsUnionsTmuxAndRelay(t *testing.T) {
 	sessions := []string{"fleet-proj-dev", "fleet-proj-ops"}
 	relayAgents := []relay.Agent{
-		{Name: "dev", Status: "active"},
+		{Name: "dev", Status: "active", LastSeen: "2026-06-15T02:17:50Z"},
 		{Name: "ghost", Status: "idle"},
 	}
 	tasks := map[string]int{"dev": 2, "ghost": 0}
+	posture := map[string]bool{"dev": true, "ops": false}
 
-	agents := mergeAgents("proj", sessions, relayAgents, tasks, true)
+	agents := mergeAgents("proj", sessions, relayAgents, tasks, posture, true)
 	if len(agents) != 3 {
 		t.Fatalf("expected 3 agents (2 sessions + 1 ghost), got %d: %+v", len(agents), agents)
 	}
@@ -432,6 +433,12 @@ func TestMergeAgentsUnionsTmuxAndRelay(t *testing.T) {
 	}
 	if dev.RelayState != "active" || dev.Tasks != 2 {
 		t.Errorf("dev should carry relay state + task count, got %+v", dev)
+	}
+	if !dev.AutoTalk {
+		t.Errorf("dev posture auto_talk should be threaded through, got %+v", dev)
+	}
+	if dev.LastSeen != "2026-06-15T02:17:50Z" {
+		t.Errorf("dev should carry last_seen, got %q", dev.LastSeen)
 	}
 
 	ops := agents[1]
@@ -454,7 +461,7 @@ func TestMergeAgentsUnionsTmuxAndRelay(t *testing.T) {
 // When the relay is down we must not invent agent state: every session is
 // listed with no relay info at all (empty RelayState, unknown tasks).
 func TestMergeAgentsRelayDown(t *testing.T) {
-	agents := mergeAgents("proj", []string{"fleet-proj-dev"}, nil, nil, false)
+	agents := mergeAgents("proj", []string{"fleet-proj-dev"}, nil, nil, nil, false)
 	if len(agents) != 1 {
 		t.Fatalf("expected 1 agent, got %d", len(agents))
 	}
@@ -470,7 +477,7 @@ func TestMergeAgentsRelayDown(t *testing.T) {
 // unknown, never a fake 0.
 func TestMergeAgentsMissingTaskCountIsUnknown(t *testing.T) {
 	agents := mergeAgents("proj", []string{"fleet-proj-dev"},
-		[]relay.Agent{{Name: "dev", Status: "active"}}, map[string]int{}, true)
+		[]relay.Agent{{Name: "dev", Status: "active"}}, map[string]int{}, nil, true)
 	if agents[0].Tasks != -1 {
 		t.Errorf("missing task count must stay -1, got %d", agents[0].Tasks)
 	}
