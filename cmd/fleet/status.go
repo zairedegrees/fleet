@@ -288,6 +288,33 @@ func deriveOpState(relayState string, tasks int) string {
 	}
 }
 
+// relativeTime renders an RFC3339 timestamp (the format coord writes last_seen
+// in) as a compact "Xs/Xm/Xh/Xd ago" relative to now. Empty or unparsable input
+// yields "" so the caller omits the segment; a future time (clock skew) clamps
+// to "just now".
+func relativeTime(lastSeen string, now time.Time) string {
+	if lastSeen == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, lastSeen)
+	if err != nil {
+		return ""
+	}
+	d := now.Sub(t)
+	switch {
+	case d < 0:
+		return "just now"
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
 func agentLine(a agentStatus) string {
 	label := a.Session
 	if label == "" {

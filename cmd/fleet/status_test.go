@@ -79,6 +79,31 @@ func TestDeriveOpState(t *testing.T) {
 	}
 }
 
+func TestRelativeTime(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	rfc := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	cases := []struct {
+		name     string
+		lastSeen string
+		want     string
+	}{
+		{"seconds", rfc(12 * time.Second), "12s ago"},
+		{"minutes", rfc(3 * time.Minute), "3m ago"},
+		{"hours", rfc(2 * time.Hour), "2h ago"},
+		{"days", rfc(50 * time.Hour), "2d ago"},
+		{"empty", "", ""},
+		{"unparsable", "not-a-time", ""},
+		{"future clock skew", now.Add(30 * time.Second).Format(time.RFC3339), "just now"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := relativeTime(c.lastSeen, now); got != c.want {
+				t.Errorf("relativeTime(%q) = %q, want %q", c.lastSeen, got, c.want)
+			}
+		})
+	}
+}
+
 // P1-A: agent names contain dashes (ux-designer ships in 3/5 presets), so a
 // session must resolve against KNOWN project names — never by guessing on the
 // last dash.
