@@ -269,6 +269,25 @@ func renderStatus(projects []projectStatus, sessionCount int, relayWarning strin
 	return b.String()
 }
 
+// deriveOpState turns the relay's registration state + task count into an
+// operator-facing word. "active" is a registration flag, not a liveness signal:
+// an active agent with zero tasks is in standby, which we surface as "idle". An
+// unknown task count (-1) must never render as idle — it becomes "registered"
+// and the task segment shows "tasks: ?".
+func deriveOpState(relayState string, tasks int) string {
+	if relayState != "active" {
+		return relayState
+	}
+	switch {
+	case tasks < 0:
+		return "registered"
+	case tasks == 0:
+		return "idle"
+	default:
+		return "working"
+	}
+}
+
 func agentLine(a agentStatus) string {
 	label := a.Session
 	if label == "" {

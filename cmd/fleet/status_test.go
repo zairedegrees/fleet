@@ -55,6 +55,30 @@ func projectConfigs(names ...string) []*config.FleetConfig {
 	return cfgs
 }
 
+func TestDeriveOpState(t *testing.T) {
+	cases := []struct {
+		name       string
+		relayState string
+		tasks      int
+		want       string
+	}{
+		{"active no tasks is idle", "active", 0, "idle"},
+		{"active with tasks is working", "active", 2, "working"},
+		{"active unknown tasks is registered", "active", -1, "registered"},
+		{"unregistered passthrough", "unregistered", -1, "unregistered"},
+		{"unknown project passthrough", "?", -1, "?"},
+		{"inactive passthrough", "inactive", 0, "inactive"},
+		{"empty passthrough", "", -1, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := deriveOpState(c.relayState, c.tasks); got != c.want {
+				t.Errorf("deriveOpState(%q,%d) = %q, want %q", c.relayState, c.tasks, got, c.want)
+			}
+		})
+	}
+}
+
 // P1-A: agent names contain dashes (ux-designer ships in 3/5 presets), so a
 // session must resolve against KNOWN project names — never by guessing on the
 // last dash.
