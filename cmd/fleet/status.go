@@ -89,7 +89,7 @@ func runStatus() error {
 		fmt.Println("  No fleet sessions running.")
 		return nil
 	}
-	fmt.Print(renderStatus(projects, len(sessions), warning))
+	fmt.Print(renderStatus(projects, len(sessions), warning, time.Now()))
 	return nil
 }
 
@@ -272,8 +272,8 @@ func postureFor(project string, configs []*config.FleetConfig) map[string]bool {
 }
 
 // renderStatus is pure (data in → string out) so the display logic is testable
-// without tmux or a relay.
-func renderStatus(projects []projectStatus, sessionCount int, relayWarning string) string {
+// without tmux or a relay. now drives the "seen Xm ago" segments.
+func renderStatus(projects []projectStatus, sessionCount int, relayWarning string, now time.Time) string {
 	var b strings.Builder
 	if relayWarning != "" {
 		fmt.Fprintf(&b, "  ⚠ %s\n\n", term.Sanitize(relayWarning))
@@ -282,11 +282,27 @@ func renderStatus(projects []projectStatus, sessionCount int, relayWarning strin
 	for _, p := range projects {
 		fmt.Fprintf(&b, "    [%s]\n", term.Sanitize(p.Project))
 		for _, a := range p.Agents {
-			fmt.Fprintf(&b, "      %s\n", agentLine(a))
+			fmt.Fprintf(&b, "      %s\n", agentLine(a, now))
 		}
 		b.WriteString("\n")
 	}
+	if hasIdle(projects) {
+		b.WriteString("  idle = registered, in standby (token discipline). Wake: fleet dispatch --to <agent> \"<task>\"\n")
+	}
 	return b.String()
+}
+
+// hasIdle reports whether any agent derives to the idle state, so the legend
+// only appears when it explains something on screen.
+func hasIdle(projects []projectStatus) bool {
+	for _, p := range projects {
+		for _, a := range p.Agents {
+			if deriveOpState(a.RelayState, a.Tasks) == "idle" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // deriveOpState turns the relay's registration state + task count into an
@@ -335,21 +351,30 @@ func relativeTime(lastSeen string, now time.Time) string {
 	}
 }
 
-func agentLine(a agentStatus) string {
-	label := a.Session
-	if label == "" {
-		label = a.Agent
-	}
-	label = term.Sanitize(label)
+func agentLine(a agentStatus, now time.Time) string {
+	label := term.Sanitize(a.Agent)
 	var parts []string
 	if a.RelayState != "" {
-		parts = append(parts, "relay: "+a.RelayState)
-		if a.RelayState != "unregistered" && a.RelayState != relayStateUnknown {
-			if a.Tasks >= 0 {
-				parts = append(parts, fmt.Sprintf("%d task(s)", a.Tasks))
+		parts = append(parts, deriveOpState(a.RelayState, a.Tasks))
+		// Posture is known only for registered ("active") agents.
+		if a.RelayState == "active" {
+			if a.AutoTalk {
+				parts = append(parts, "auto-talk")
 			} else {
+				parts = append(parts, "on-demand")
+			}
+		}
+		// Task detail: ">=1" shows the count (idle/0 is already conveyed by the
+		// state word); a registered agent with an unknown count is honest "?".
+		if a.RelayState != "unregistered" && a.RelayState != relayStateUnknown {
+			if a.Tasks >= 1 {
+				parts = append(parts, fmt.Sprintf("%d task(s)", a.Tasks))
+			} else if a.Tasks < 0 {
 				parts = append(parts, "tasks: ?")
 			}
+		}
+		if seen := relativeTime(a.LastSeen, now); seen != "" {
+			parts = append(parts, "seen "+seen)
 		}
 	}
 	if !a.HasSession {

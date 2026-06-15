@@ -391,6 +391,9 @@ func TestFetchTaskCountsFailureIsNotFakedOrRetried(t *testing.T) {
 }
 
 // The "?" state renders as an honest unknown without a task count.
+// renderRef is a fixed "now" so seen-ago segments are deterministic in tests.
+var renderRef = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+
 func TestRenderStatusUnknownRelayState(t *testing.T) {
 	projects := []projectStatus{
 		{
@@ -401,9 +404,9 @@ func TestRenderStatusUnknownRelayState(t *testing.T) {
 		},
 	}
 
-	out := renderStatus(projects, 1, "")
-	if !strings.Contains(out, "fleet-mystery-agent  [relay: ?]") {
-		t.Errorf("expected honest unknown relay state, got: %q", out)
+	out := renderStatus(projects, 1, "", renderRef)
+	if !strings.Contains(out, "agent  [?]") {
+		t.Errorf("expected honest unknown state with short name, got: %q", out)
 	}
 	if strings.Contains(out, "unregistered") || strings.Contains(out, "task") {
 		t.Errorf("unknown state must not assert registration or tasks, got: %q", out)
@@ -484,32 +487,37 @@ func TestMergeAgentsMissingTaskCountIsUnknown(t *testing.T) {
 }
 
 func TestRenderStatusFullView(t *testing.T) {
+	seen := renderRef.Add(-2 * time.Minute).Format(time.RFC3339)
 	projects := []projectStatus{
 		{
 			Project: "proj",
 			Agents: []agentStatus{
-				{Session: "fleet-proj-dev", Agent: "dev", RelayState: "active", Tasks: 2, HasSession: true},
+				{Session: "fleet-proj-dev", Agent: "dev", RelayState: "active", Tasks: 2, HasSession: true, AutoTalk: false, LastSeen: seen},
 				{Session: "fleet-proj-ops", Agent: "ops", RelayState: "unregistered", Tasks: -1, HasSession: true},
-				{Agent: "ghost", RelayState: "idle", Tasks: 0, HasSession: false},
+				{Agent: "watcher", RelayState: "active", Tasks: 0, HasSession: false, AutoTalk: true, LastSeen: seen},
 			},
 		},
 	}
 
-	out := renderStatus(projects, 2, "")
+	out := renderStatus(projects, 2, "", renderRef)
 	if !strings.Contains(out, "2 fleet session(s):") {
 		t.Errorf("expected session count header, got: %q", out)
 	}
 	if !strings.Contains(out, "[proj]") {
 		t.Errorf("expected project grouping, got: %q", out)
 	}
-	if !strings.Contains(out, "fleet-proj-dev  [relay: active · 2 task(s)]") {
-		t.Errorf("expected relay state + task count for dev, got: %q", out)
+	if !strings.Contains(out, "dev  [working · on-demand · 2 task(s) · seen 2m ago]") {
+		t.Errorf("expected working line for dev, got: %q", out)
 	}
-	if !strings.Contains(out, "fleet-proj-ops  [relay: unregistered]") {
-		t.Errorf("expected unregistered marker without task count, got: %q", out)
+	if !strings.Contains(out, "ops  [unregistered]") {
+		t.Errorf("expected unregistered marker without posture/tasks, got: %q", out)
 	}
-	if !strings.Contains(out, "ghost  [relay: idle · 0 task(s) · no tmux session]") {
-		t.Errorf("expected ghost line flagged as having no tmux session, got: %q", out)
+	if !strings.Contains(out, "watcher  [idle · auto-talk · seen 2m ago · no tmux session]") {
+		t.Errorf("expected idle ghost with posture + seen + no-session flag, got: %q", out)
+	}
+	// idle present → legend must render once.
+	if !strings.Contains(out, "idle = registered, in standby") {
+		t.Errorf("expected idle legend, got: %q", out)
 	}
 }
 
@@ -525,15 +533,15 @@ func TestRenderStatusDegraded(t *testing.T) {
 		},
 	}
 
-	out := renderStatus(projects, 1, "relay unreachable at http://x — showing tmux sessions only")
+	out := renderStatus(projects, 1, "relay unreachable at http://x — showing tmux sessions only", renderRef)
 	if !strings.HasPrefix(out, "  ⚠ relay unreachable") {
 		t.Errorf("expected leading warning line, got: %q", out)
 	}
-	if !strings.Contains(out, "fleet-proj-dev\n") {
-		t.Errorf("expected bare session line in degraded mode, got: %q", out)
+	if !strings.Contains(out, "      dev\n") {
+		t.Errorf("expected bare short-name line in degraded mode, got: %q", out)
 	}
-	if strings.Contains(out, "relay:") || strings.Contains(out, "task") {
-		t.Errorf("degraded view must not invent relay state, got: %q", out)
+	if strings.Contains(out, "relay:") || strings.Contains(out, "task") || strings.Contains(out, "idle") {
+		t.Errorf("degraded view must not invent state, got: %q", out)
 	}
 }
 
@@ -548,8 +556,8 @@ func TestRenderStatusUnknownTaskCount(t *testing.T) {
 		},
 	}
 
-	out := renderStatus(projects, 1, "")
-	if !strings.Contains(out, "fleet-proj-dev  [relay: active · tasks: ?]") {
-		t.Errorf("expected explicit unknown task count, got: %q", out)
+	out := renderStatus(projects, 1, "", renderRef)
+	if !strings.Contains(out, "dev  [registered · on-demand · tasks: ?]") {
+		t.Errorf("expected registered with explicit unknown task count, got: %q", out)
 	}
 }
