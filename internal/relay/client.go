@@ -22,6 +22,7 @@ type Agent struct {
 	ReportsTo   string `json:"reports_to"`
 	IsExecutive bool   `json:"is_executive"`
 	Color       string `json:"color"`
+	LastSeen    string `json:"last_seen"`
 }
 
 type mpcRequest struct {
