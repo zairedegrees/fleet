@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.4] — 2026-06-15
+
+### Added
+- **Readable fleet status.** `fleet --status` now derives each agent's operator
+  state — `idle` (registered, no active task), `working` (active task), or
+  `registered` (task count unknown) — instead of the misleading raw
+  `relay: active · 0 task(s)`. Each line also carries its config posture
+  (`auto-talk` vs `on-demand`) and a `seen Xm ago` stamp parsed from the relay's
+  `last_seen` (already on the wire), uses the short agent name (the project is
+  the group header), and a one-line legend explains the `idle` standby state and
+  how to wake an agent — shown only when an agent is actually idle.
+- **Launch recap explains the quiet-by-design posture.** After a launch the recap
+  states that agents register, take their role, then go quiet (token discipline),
+  counts how many greet at boot (`auto-talk`) vs wait `on-demand`, and points to
+  `fleet dispatch` and `fleet --status` — instead of an unexplained "watch the
+  panes".
+
+No coord wire-contract change; agent behavior is unchanged (token discipline
+preserved) — this release is pure legibility.
+
 ## [0.1.3] — 2026-06-14
 
 ### Added
