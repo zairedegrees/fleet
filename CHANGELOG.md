@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] — 2026-06-14
+
+### Added
+- **Per-agent behavioral config.** `[[agents]]` entries gain `model`, `persona`,
+  `skills`, `tools`, and `permission_mode` — all optional and `omitempty`, so
+  existing `~/.fleet` configs load and re-save byte-identically.
+- **Per-agent launch.** Agents now launch with `--model`, `--permission-mode` and
+  `--allowedTools`, and their persona is injected via `--append-system-prompt-file`
+  (written to `~/.fleet/personas/<project>-<agent>.txt`). The multiline persona
+  never rides a `tmux send-keys` line — only its file path does — so quotes,
+  `$`, backticks and newlines are inert. Tool allow-lists always re-include
+  `mcp__agent-relay__*` so a narrowed scope never breaks task routing.
+- **Personas ready for any project, out of the box.** At launch, an agent whose
+  name matches a known role (`dev`, `auditor`, `ops`, `frontend`, `ux-designer`,
+  `researcher`, `quant`, `architect`, `security`, `docs`, `notifier`) fills its
+  empty behavioral fields from that role's profile — so existing fleets get
+  ready-made personas with no config change. Explicit config values always win;
+  an agent named after no known role launches bare (byte-identical to v0.1.2).
+  The config on disk is never rewritten — defaults are resolved per launch.
+- **Behavioral preset library v2.** A canonical identity per role (model tier,
+  persona, skills, tool scope, permission posture) backs all presets. The 7
+  existing presets are tuned in place and three new ones ship — Solo Pair ⚡⚡
+  (cheap hands, Opus eyes), Design Studio 🎨, Security Hardening 🛡. Personas
+  carry an idle-discipline clause and preset agents stay `auto_talk = false`.
+- **Wizard agent drawer** now edits Model and Permission (selects) and a
+  multiline Persona (textarea: Enter inserts a newline, Tab/Ctrl+S leaves). When
+  fleet-wide skip-all is on, the Permission row says the per-agent posture is
+  ignored rather than showing one it won't honor.
+
+### Changed
+- The agent drawer is table-driven (`[]fieldSpec`): adding a field is one row,
+  not three hardcoded chains.
+
 ## [0.1.2] — 2026-06-14
 
 ### Fixed

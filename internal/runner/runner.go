@@ -27,13 +27,14 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 	var results []LaunchResult
 	project := cfg.Project.Name
 
-	claudeCmd := claudeBin
-	for _, f := range cfg.Claude.Flags {
-		claudeCmd += " " + f
-	}
-
 	for _, agent := range cfg.Agents {
 		res := LaunchResult{Agent: agent.Name}
+
+		// Fill empty behavioral fields from the agent's role so a fleet ships
+		// ready-made personas for the standard roles (dev, auditor, ops, …)
+		// without rewriting the config on disk. Explicit values always win; an
+		// unknown role name is left bare (byte-identical to v0.1.2).
+		agent = config.ResolveDefaults(agent)
 
 		if HasSession(project, agent.Name) {
 			fmt.Printf("  ✓ %s already running, skipping\n", SessionName(project, agent.Name))
@@ -59,6 +60,18 @@ func CreateSessions(cfg *config.FleetConfig, claudeBin string) []LaunchResult {
 		}
 		time.Sleep(200 * time.Millisecond)
 
+		// Write the agent's persona to a file (no-op when it has none) and build
+		// its OWN launch line: per-agent model/permission/persona/tools. The
+		// persona prose stays in the file — only its path rides the command.
+		personaPath, err := WritePersonaFile(project, agent)
+		if err != nil {
+			res.Error = fmt.Errorf("persona write failed: %w", err)
+			res.Action = "failed"
+			results = append(results, res)
+			continue
+		}
+
+		claudeCmd := BuildLaunch(claudeBin, cfg.Claude.Flags, agent, personaPath)
 		if err := SendKeys(project, agent.Name, claudeCmd); err != nil {
 			res.Error = fmt.Errorf("claude launch failed: %w", err)
 			res.Action = "failed"

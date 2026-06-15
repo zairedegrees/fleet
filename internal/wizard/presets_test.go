@@ -4,8 +4,8 @@ import "testing"
 
 func TestAllPresets(t *testing.T) {
 	presets := AllPresets()
-	if len(presets) != 7 {
-		t.Fatalf("expected 7 presets, got %d", len(presets))
+	if len(presets) != 10 {
+		t.Fatalf("expected 10 presets, got %d", len(presets))
 	}
 
 	// Verify each preset has a unique name

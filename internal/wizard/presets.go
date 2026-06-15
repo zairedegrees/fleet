@@ -37,70 +37,108 @@ const (
 	drawerCreate
 )
 
-// AllPresets returns the 7 built-in team presets.
+// AllPresets returns the 10 built-in team presets. Each agent is behaviorally
+// tuned (model + persona + skills + tool scope + permission posture) via
+// config.RoleAgent; presets deviate from a role's default with config.WithModel/
+// WithPerm/AsExecutive. Agents default to AutoTalk=false (stay idle until
+// dispatched) to honor the fleet's token discipline — opt an agent into talk.
 func AllPresets() []Preset {
 	return []Preset{
 		{
 			Name: "Web App",
 			Icon: "🌐",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "frontend", Color: "orange", Role: "Frontend development"},
-				{Name: "ux-designer", Color: "blue", Role: "UX design and user experience", ReportsTo: "dev"},
-				{Name: "auditor", Color: "red", Role: "Code review and testing", ReportsTo: "dev"},
-				{Name: "ops", Color: "purple", Role: "CI/CD and deployment", ReportsTo: "dev"},
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("frontend", "orange", "dev"),
+				config.RoleAgent("ux-designer", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
+				config.RoleAgent("ops", "purple", "dev"),
 			},
 		},
 		{
 			Name: "API / Backend",
 			Icon: "⚙",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "auditor", Color: "orange", Role: "Code review and testing", ReportsTo: "dev"},
-				{Name: "ops", Color: "blue", Role: "CI/CD and deployment", ReportsTo: "dev"},
+				// Sole lead judgement carries the design — give dev Opus here.
+				config.WithModel(config.RoleAgent("dev", "green", ""), "opus"),
+				config.RoleAgent("auditor", "orange", "dev"),
+				config.RoleAgent("ops", "blue", "dev"),
 			},
 		},
 		{
 			Name: "Data / ML",
 			Icon: "📊",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "researcher", Color: "orange", Role: "Data analysis and research", ReportsTo: "dev"},
-				{Name: "quant", Color: "blue", Role: "Quantitative analysis", ReportsTo: "dev"},
-				{Name: "auditor", Color: "red", Role: "Code review and testing", ReportsTo: "dev"},
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("researcher", "orange", "dev"),
+				config.RoleAgent("quant", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
 			},
 		},
 		{
 			Name: "Trading Bot",
 			Icon: "💰",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "quant", Color: "orange", Role: "Quantitative analysis and trading strategy", ReportsTo: "dev"},
-				{Name: "auditor", Color: "blue", Role: "Code review and testing", ReportsTo: "dev"},
-				{Name: "ops", Color: "red", Role: "CI/CD and deployment", ReportsTo: "dev"},
-				{Name: "researcher", Color: "purple", Role: "Market research and data analysis", ReportsTo: "dev"},
-				{Name: "ux-designer", Color: "pink", Role: "UX design and notifications", ReportsTo: "dev"},
+				config.RoleAgent("dev", "green", ""),
+				// Strategy work, but no live endpoints from this seat → default posture.
+				config.WithPerm(config.RoleAgent("quant", "orange", "dev"), "default"),
+				config.RoleAgent("auditor", "blue", "dev"),
+				config.RoleAgent("researcher", "purple", "dev"),
+				config.RoleAgent("ops", "red", "dev"),
+				config.RoleAgent("notifier", "pink", "dev"),
 			},
 		},
 		{
 			Name: "Full Stack",
 			Icon: "🚀",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "frontend", Color: "orange", Role: "Frontend development", ReportsTo: "dev"},
-				{Name: "ux-designer", Color: "blue", Role: "UX design and user experience", ReportsTo: "dev"},
-				{Name: "auditor", Color: "red", Role: "Code review and testing", ReportsTo: "dev"},
-				{Name: "ops", Color: "purple", Role: "CI/CD and deployment", ReportsTo: "dev"},
-				{Name: "researcher", Color: "pink", Role: "Research and documentation", ReportsTo: "dev"},
-				{Name: "docs", Color: "cyan", Role: "Documentation", ReportsTo: "dev"},
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("frontend", "orange", "dev"),
+				config.RoleAgent("ux-designer", "blue", "dev"),
+				config.RoleAgent("auditor", "red", "dev"),
+				config.RoleAgent("ops", "purple", "dev"),
+				config.RoleAgent("researcher", "pink", "dev"),
+				config.RoleAgent("docs", "cyan", "dev"),
 			},
 		},
 		{
 			Name: "Minimal",
 			Icon: "⚡",
 			Agents: []config.AgentConfig{
-				{Name: "dev", Color: "green", Role: "Lead developer"},
-				{Name: "auditor", Color: "orange", Role: "Code review and testing", ReportsTo: "dev"},
+				// Tiny but high-quality: an Opus lead and an Opus reviewer.
+				config.WithModel(config.RoleAgent("dev", "green", ""), "opus"),
+				config.RoleAgent("auditor", "orange", "dev"),
+			},
+		},
+		{
+			// Solo Pair: cheap hands, expensive eyes — the new go-to default.
+			Name: "Solo Pair",
+			Icon: "⚡⚡",
+			Agents: []config.AgentConfig{
+				config.RoleAgent("dev", "green", ""),
+				config.RoleAgent("auditor", "orange", "dev"),
+			},
+		},
+		{
+			// Design Studio: design leads under an architect (hierarchy flipped).
+			Name: "Design Studio",
+			Icon: "🎨",
+			Agents: []config.AgentConfig{
+				config.AsExecutive(config.RoleAgent("architect", "green", "")),
+				config.RoleAgent("ux-designer", "orange", "architect"),
+				config.RoleAgent("frontend", "blue", "architect"),
+				config.RoleAgent("auditor", "red", "architect"),
+			},
+		},
+		{
+			// Security Hardening: read-mostly — only dev can write.
+			Name: "Security Hardening",
+			Icon: "🛡",
+			Agents: []config.AgentConfig{
+				config.AsExecutive(config.RoleAgent("architect", "green", "")),
+				config.RoleAgent("security", "orange", "architect"),
+				config.RoleAgent("auditor", "blue", "architect"),
+				config.RoleAgent("dev", "red", "architect"),
 			},
 		},
 		{

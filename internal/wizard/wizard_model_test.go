@@ -201,14 +201,16 @@ func TestWizardAutoTalkRoundTrip(t *testing.T) {
 	if !m.drawerOpen {
 		t.Fatal("drawer should be open after EditAgentMsg")
 	}
+	// Computed navigation from the drawerFields table so adding drawer fields
+	// never silently breaks this round-trip (uses tab, which advances every kind).
 	tab := tea.KeyMsg{Type: tea.KeyTab}
-	step(tab)                            // name -> role
-	step(tab)                            // role -> color
-	step(tab)                            // color -> reports-to
-	step(tab)                            // reports-to -> auto-talk
+	for range fieldIndex(dfAutoTalk) {
+		step(tab) // name -> ... -> auto-talk
+	}
 	step(tea.KeyMsg{Type: tea.KeyRight}) // off -> on
-	step(tea.KeyMsg{Type: tea.KeyEnter}) // auto-talk -> executive
-	step(tea.KeyMsg{Type: tea.KeyEnter}) // save -> DrawerSaveMsg
+	for range len(drawerFields) - fieldIndex(dfAutoTalk) {
+		step(tab) // auto-talk -> ... -> save
+	}
 
 	if m.drawerOpen {
 		t.Fatal("drawer should be closed after save")

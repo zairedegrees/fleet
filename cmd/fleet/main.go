@@ -20,7 +20,7 @@ import (
 
 // fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
 // the release tag.
-const fleetVersion = "0.1.2"
+const fleetVersion = "0.1.3"
 
 const defaultRelayURL = config.DefaultRelayURL
 
@@ -365,10 +365,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	claudeCmd := claudeBin
-	for _, f := range cfg.Claude.Flags {
-		claudeCmd += " " + f
+	// Resolve role defaults and build the launch line through the same builder as
+	// CreateSessions so the two sites can't drift — an agent added as `auditor`
+	// gets the auditor persona for free, written to its file (off the saved config).
+	launchAgent := config.ResolveDefaults(agent)
+	personaPath, err := runner.WritePersonaFile(project, launchAgent)
+	if err != nil {
+		return fmt.Errorf("failed to write persona: %w", err)
 	}
+	claudeCmd := runner.BuildLaunch(claudeBin, cfg.Claude.Flags, launchAgent, personaPath)
 
 	if err := runner.CreateSession(project, name, cfg.Project.Cwd); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)

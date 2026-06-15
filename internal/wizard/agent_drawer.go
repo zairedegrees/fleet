@@ -3,6 +3,7 @@ package wizard
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,8 +24,11 @@ type drawerField int
 const (
 	dfName drawerField = iota
 	dfRole
+	dfPersona
 	dfColor
 	dfReportsTo
+	dfModel
+	dfPermission
 	dfAutoTalk
 	dfExecutive
 )
@@ -35,27 +39,106 @@ var autoTalkOpts = []string{"off", "on"}
 // executiveOpts are the executive toggle options (index 1 = on).
 var executiveOpts = []string{"off", "on"}
 
+// modelOpts / permModeOpts are the drawer's select choices. Index 0 ("inherit")
+// maps to an empty stored value so an untouched field keeps Claude's default.
+// permModeOpts offers the common postures; the full enum (incl. "auto") stays
+// reachable via presets and hand-edited TOML.
+var modelOpts = []string{"inherit", "opus", "sonnet", "haiku"}
+var permModeOpts = []string{"inherit", "default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+
+// optToValue maps a select option to its stored value: "inherit" → "".
+func optToValue(opt string) string {
+	if opt == "inherit" {
+		return ""
+	}
+	return opt
+}
+
+// valueToOptIdx finds the option index for a stored value ("" → "inherit" at 0).
+func valueToOptIdx(opts []string, value string) int {
+	if value == "" {
+		return 0
+	}
+	for i, o := range opts {
+		if o == value {
+			return i
+		}
+	}
+	return 0
+}
+
+// fieldKind classifies how a drawer field is edited and rendered.
+type fieldKind int
+
+const (
+	kindText fieldKind = iota
+	kindTextarea
+	kindSelect
+)
+
+// fieldSpec describes one drawer field. drawerFields is the single ordered
+// source of truth for navigation, the commit-on-last decision, and rendering —
+// adding a field means adding a row here (plus its backing storage), not editing
+// three separate hardcoded chains (nextField, the select-commit, and View).
+type fieldSpec struct {
+	id    drawerField
+	kind  fieldKind
+	label string // padded label text, rendered after the focus marker
+}
+
+var drawerFields = []fieldSpec{
+	{dfName, kindText, "Name:       "},
+	{dfRole, kindText, "Role:       "},
+	{dfPersona, kindTextarea, "Persona:    "},
+	{dfColor, kindSelect, "Color:      "},
+	{dfReportsTo, kindSelect, "Reports to: "},
+	{dfModel, kindSelect, "Model:      "},
+	{dfPermission, kindSelect, "Permission: "},
+	{dfAutoTalk, kindSelect, "Auto-talk:  "},
+	{dfExecutive, kindSelect, "Executive:  "},
+}
+
+func fieldIndex(id drawerField) int {
+	for i, f := range drawerFields {
+		if f.id == id {
+			return i
+		}
+	}
+	return 0
+}
+
+// isLastField reports whether id is the final field — entering past it saves.
+func isLastField(id drawerField) bool { return fieldIndex(id) == len(drawerFields)-1 }
+
 // agentDrawer is the bottom drawer sub-model for edit/create.
 type agentDrawer struct {
 	nameInput    textinput.Model
 	roleInput    textinput.Model
+	personaArea  textarea.Model
 	colorIdx     int
 	reportsIdx   int
 	reportOpts   []string // "(none)" + agent names
+	modelIdx     int      // index into modelOpts
+	permIdx      int      // index into permModeOpts
 	autoTalkIdx  int      // index into autoTalkOpts
 	executiveIdx int      // index into executiveOpts
 
-	// base is the agent being edited (zero for create): save() starts from it
-	// so any future AgentConfig field the drawer doesn't manage survives an
-	// edit instead of being dropped. Today every field IS drawer-managed, so
-	// this capture is unobservable behavior — an equivalent mutant that no
-	// test can pin until config grows an unmanaged field.
+	// base is the agent being edited (zero for create): save() starts from it so
+	// AgentConfig fields the drawer does NOT manage survive an edit instead of
+	// being dropped. Persona/Skills/Tools are currently unmanaged (set by presets
+	// + TOML, not editable here), so this capture is now observable behavior —
+	// pinned by TestDrawerEditPreservesUnmanagedFields.
 	base config.AgentConfig
 
 	field     drawerField
 	mode      drawerMode // drawerEdit or drawerCreate
 	editIndex int        // index of agent being edited, -1 for new
 	title     string
+
+	// skipPerms mirrors the fleet-wide --dangerously-skip-permissions stance. When
+	// set it overrides every per-agent permission_mode, so the drawer renders the
+	// Permission row disabled rather than showing a posture it won't honor.
+	skipPerms bool
 }
 
 func newAgentDrawer() agentDrawer {
@@ -69,9 +152,17 @@ func newAgentDrawer() agentDrawer {
 	ri.CharLimit = 60
 	ri.Width = 25
 
+	pa := textarea.New()
+	pa.Placeholder = "Persona / system prompt (optional) — Enter for a new line, Tab to leave"
+	pa.CharLimit = 8000
+	pa.SetWidth(60)
+	pa.SetHeight(4)
+	pa.ShowLineNumbers = false
+
 	return agentDrawer{
-		nameInput: ni,
-		roleInput: ri,
+		nameInput:   ni,
+		roleInput:   ri,
+		personaArea: pa,
 	}
 }
 
@@ -86,6 +177,8 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 	d.nameInput.SetValue(agent.Name)
 	d.nameInput.Focus()
 	d.roleInput.SetValue(agent.Role)
+	d.personaArea.SetValue(agent.Persona)
+	d.personaArea.Blur()
 
 	// Find color index
 	d.colorIdx = 0
@@ -111,6 +204,9 @@ func (d *agentDrawer) OpenEdit(index int, agent config.AgentConfig, agentNames [
 		}
 	}
 
+	d.modelIdx = valueToOptIdx(modelOpts, agent.Model)
+	d.permIdx = valueToOptIdx(permModeOpts, agent.PermissionMode)
+
 	d.autoTalkIdx = 0
 	if agent.AutoTalk {
 		d.autoTalkIdx = 1
@@ -133,6 +229,8 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 	d.nameInput.SetValue("")
 	d.nameInput.Focus()
 	d.roleInput.SetValue("")
+	d.personaArea.SetValue("")
+	d.personaArea.Blur()
 	d.colorIdx = nextColorIdx % len(agentColors)
 
 	d.reportOpts = []string{"(none)"}
@@ -140,6 +238,8 @@ func (d *agentDrawer) OpenCreate(agentNames []string, nextColorIdx int) {
 	for _, name := range agentNames {
 		d.reportOpts = append(d.reportOpts, name)
 	}
+	d.modelIdx = 0 // inherit
+	d.permIdx = 0  // inherit
 	d.autoTalkIdx = 0
 	d.executiveIdx = 0
 }
@@ -153,38 +253,91 @@ func (d agentDrawer) Update(msg tea.Msg) (agentDrawer, tea.Cmd) {
 		return d, cmd
 	}
 
-	// Forward to active text input
+	// Forward non-key messages (e.g. cursor blink) to the active input.
 	var cmd tea.Cmd
 	switch d.field {
 	case dfName:
 		d.nameInput, cmd = d.nameInput.Update(msg)
 	case dfRole:
 		d.roleInput, cmd = d.roleInput.Update(msg)
+	case dfPersona:
+		d.personaArea, cmd = d.personaArea.Update(msg)
 	}
 	return d, cmd
+}
+
+// textInput returns the text input backing a kindText field, or nil.
+func (d *agentDrawer) textInput(id drawerField) *textinput.Model {
+	switch id {
+	case dfName:
+		return &d.nameInput
+	case dfRole:
+		return &d.roleInput
+	}
+	return nil
+}
+
+// selectState returns the options and the selected index for a kindSelect field
+// (the read path, used by View).
+func (d *agentDrawer) selectState(id drawerField) ([]string, int) {
+	switch id {
+	case dfColor:
+		return agentColors, d.colorIdx
+	case dfReportsTo:
+		return d.reportOpts, d.reportsIdx
+	case dfModel:
+		return modelOpts, d.modelIdx
+	case dfPermission:
+		return permModeOpts, d.permIdx
+	case dfAutoTalk:
+		return autoTalkOpts, d.autoTalkIdx
+	case dfExecutive:
+		return executiveOpts, d.executiveIdx
+	}
+	return nil, 0
+}
+
+// selectPtr returns a pointer to the selected-index and the option count for a
+// kindSelect field (the write path, used by key handling).
+func (d *agentDrawer) selectPtr(id drawerField) (*int, int) {
+	switch id {
+	case dfColor:
+		return &d.colorIdx, len(agentColors)
+	case dfReportsTo:
+		return &d.reportsIdx, len(d.reportOpts)
+	case dfModel:
+		return &d.modelIdx, len(modelOpts)
+	case dfPermission:
+		return &d.permIdx, len(permModeOpts)
+	case dfAutoTalk:
+		return &d.autoTalkIdx, len(autoTalkOpts)
+	case dfExecutive:
+		return &d.executiveIdx, len(executiveOpts)
+	}
+	return nil, 0
 }
 
 func (d *agentDrawer) handleKey(msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc":
 		return func() tea.Msg { return DrawerCancelMsg{} }
-	case "tab":
+	case "tab", "ctrl+s":
+		// tab/ctrl+s advance every field kind. In the persona textarea Enter is a
+		// newline, so these are the only ways out — intercepted before the
+		// textarea sees them.
 		return d.nextField()
 	}
 
-	switch d.field {
-	case dfName:
-		return d.handleTextField(msg, &d.nameInput)
-	case dfRole:
-		return d.handleTextField(msg, &d.roleInput)
-	case dfColor:
-		return d.handleSelectField(msg, &d.colorIdx, len(agentColors))
-	case dfReportsTo:
-		return d.handleSelectField(msg, &d.reportsIdx, len(d.reportOpts))
-	case dfAutoTalk:
-		return d.handleSelectField(msg, &d.autoTalkIdx, len(autoTalkOpts))
-	case dfExecutive:
-		return d.handleSelectField(msg, &d.executiveIdx, len(executiveOpts))
+	switch drawerFields[fieldIndex(d.field)].kind {
+	case kindText:
+		return d.handleTextField(msg, d.textInput(d.field))
+	case kindTextarea:
+		var cmd tea.Cmd
+		d.personaArea, cmd = d.personaArea.Update(msg)
+		return cmd
+	case kindSelect:
+		idx, count := d.selectPtr(d.field)
+		return d.handleSelectField(msg, idx, count)
 	}
 	return nil
 }
@@ -218,7 +371,7 @@ func (d *agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) tea
 			*idx++
 		}
 	case "enter":
-		if d.field == dfExecutive {
+		if isLastField(d.field) {
 			return d.save()
 		}
 		return d.nextField()
@@ -226,33 +379,44 @@ func (d *agentDrawer) handleSelectField(msg tea.KeyMsg, idx *int, count int) tea
 	return nil
 }
 
-func (d *agentDrawer) nextField() tea.Cmd {
-	switch d.field {
-	case dfName:
-		if strings.TrimSpace(d.nameInput.Value()) == "" {
-			return nil
-		}
-		d.field = dfRole
-		d.nameInput.Blur()
-		d.roleInput.Focus()
+// blurField removes focus from a field's editor (no-op for select fields).
+func (d *agentDrawer) blurField(id drawerField) {
+	if in := d.textInput(id); in != nil {
+		in.Blur()
+		return
+	}
+	if id == dfPersona {
+		d.personaArea.Blur()
+	}
+}
+
+// focusField gives a field's editor focus, returning its blink cmd (nil for
+// select fields, which have no cursor).
+func (d *agentDrawer) focusField(id drawerField) tea.Cmd {
+	if in := d.textInput(id); in != nil {
+		in.Focus()
 		return textinput.Blink
-	case dfRole:
-		d.field = dfColor
-		d.roleInput.Blur()
-		return nil
-	case dfColor:
-		d.field = dfReportsTo
-		return nil
-	case dfReportsTo:
-		d.field = dfAutoTalk
-		return nil
-	case dfAutoTalk:
-		d.field = dfExecutive
-		return nil
-	case dfExecutive:
-		return d.save()
+	}
+	if id == dfPersona {
+		return d.personaArea.Focus()
 	}
 	return nil
+}
+
+// nextField advances to the next field in drawerFields, saving when it steps
+// past the last one. Leaving an editor blurs it; entering one focuses it. The
+// name guard keeps an empty name from advancing, mirroring the create flow.
+func (d *agentDrawer) nextField() tea.Cmd {
+	if d.field == dfName && strings.TrimSpace(d.nameInput.Value()) == "" {
+		return nil
+	}
+	i := fieldIndex(d.field)
+	if i == len(drawerFields)-1 {
+		return d.save()
+	}
+	d.blurField(d.field)
+	d.field = drawerFields[i+1].id
+	return d.focusField(d.field)
 }
 
 func (d *agentDrawer) save() tea.Cmd {
@@ -270,7 +434,10 @@ func (d *agentDrawer) save() tea.Cmd {
 	agent.Name = name
 	agent.Color = agentColors[d.colorIdx]
 	agent.Role = strings.TrimSpace(d.roleInput.Value())
+	agent.Persona = d.personaArea.Value()
 	agent.ReportsTo = reportsTo
+	agent.Model = optToValue(modelOpts[d.modelIdx])
+	agent.PermissionMode = optToValue(permModeOpts[d.permIdx])
 	agent.AutoTalk = d.autoTalkIdx == 1
 	agent.IsExecutive = d.executiveIdx == 1
 
@@ -278,6 +445,23 @@ func (d *agentDrawer) save() tea.Cmd {
 	return func() tea.Msg {
 		return DrawerSaveMsg{Agent: agent, Index: index}
 	}
+}
+
+// personaSummary renders a one-line preview for the unfocused persona row: the
+// first line, truncated, or a dim "(none)" when empty.
+func personaSummary(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return dimStyle.Render("(none)")
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	const max = 40
+	if r := []rune(s); len(r) > max {
+		s = string(r[:max]) + "…"
+	}
+	return s
 }
 
 func (d agentDrawer) View() string {
@@ -292,87 +476,55 @@ func (d agentDrawer) View() string {
 
 	sb.WriteString(headerStyle.Render(d.title) + "\n")
 
-	// Name field
-	label := dimStyle.Render("  Name:       ")
-	if d.field == dfName {
-		label = selectedStyle.Render("▸ Name:       ")
-		sb.WriteString(label + d.nameInput.View() + "\n")
-	} else {
-		sb.WriteString(label + d.nameInput.Value() + "\n")
-	}
-
-	// Role field
-	label = dimStyle.Render("  Role:       ")
-	if d.field == dfRole {
-		label = selectedStyle.Render("▸ Role:       ")
-		sb.WriteString(label + d.roleInput.View() + "\n")
-	} else {
-		sb.WriteString(label + d.roleInput.Value() + "\n")
-	}
-
-	// Color field
-	label = dimStyle.Render("  Color:      ")
-	if d.field == dfColor {
-		label = selectedStyle.Render("▸ Color:      ")
-	}
-	sb.WriteString(label)
-	for i, c := range agentColors {
-		dot := colorToAnsi(c)
-		if i == d.colorIdx {
-			sb.WriteString(selectedStyle.Render("["+c+"]") + " ")
-		} else {
-			sb.WriteString(dimStyle.Render(c) + " ")
+	// Fields, driven by the drawerFields table. A text field shows its live
+	// input when focused, its value otherwise; a select field lists its options
+	// with the chosen one bracketed. Adding a field is one row in drawerFields.
+	for _, spec := range drawerFields {
+		focused := d.field == spec.id
+		label := dimStyle.Render("  " + spec.label)
+		if focused {
+			label = selectedStyle.Render("▸ " + spec.label)
 		}
-		_ = dot
-	}
-	sb.WriteString("\n")
 
-	// Reports-to field
-	label = dimStyle.Render("  Reports to: ")
-	if d.field == dfReportsTo {
-		label = selectedStyle.Render("▸ Reports to: ")
-	}
-	sb.WriteString(label)
-	for i, opt := range d.reportOpts {
-		if i == d.reportsIdx {
-			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
-		} else {
-			sb.WriteString(dimStyle.Render(opt) + " ")
+		switch spec.kind {
+		case kindText:
+			in := d.textInput(spec.id)
+			if focused {
+				sb.WriteString(label + in.View() + "\n")
+			} else {
+				sb.WriteString(label + in.Value() + "\n")
+			}
+		case kindTextarea:
+			// Multi-line: the full editor when focused (on its own lines), a
+			// one-line summary otherwise so the drawer stays compact.
+			if focused {
+				sb.WriteString(label + "\n" + d.personaArea.View() + "\n")
+			} else {
+				sb.WriteString(label + personaSummary(d.personaArea.Value()) + "\n")
+			}
+		case kindSelect:
+			sb.WriteString(label)
+			if spec.id == dfPermission && d.skipPerms {
+				sb.WriteString(dimStyle.Render("(fleet skip-all on — per-agent posture ignored)") + "\n")
+				continue
+			}
+			opts, sel := d.selectState(spec.id)
+			for i, opt := range opts {
+				if i == sel {
+					sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
+				} else {
+					sb.WriteString(dimStyle.Render(opt) + " ")
+				}
+			}
+			sb.WriteString("\n")
 		}
 	}
-	sb.WriteString("\n")
 
-	// Auto-talk field
-	label = dimStyle.Render("  Auto-talk:  ")
-	if d.field == dfAutoTalk {
-		label = selectedStyle.Render("▸ Auto-talk:  ")
+	hint := "tab=next  enter=save  esc=cancel"
+	if d.field == dfPersona {
+		hint = "⏎=newline  tab=next field  esc=cancel"
 	}
-	sb.WriteString(label)
-	for i, opt := range autoTalkOpts {
-		if i == d.autoTalkIdx {
-			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
-		} else {
-			sb.WriteString(dimStyle.Render(opt) + " ")
-		}
-	}
-	sb.WriteString("\n")
-
-	// Executive field
-	label = dimStyle.Render("  Executive:  ")
-	if d.field == dfExecutive {
-		label = selectedStyle.Render("▸ Executive:  ")
-	}
-	sb.WriteString(label)
-	for i, opt := range executiveOpts {
-		if i == d.executiveIdx {
-			sb.WriteString(selectedStyle.Render("["+opt+"]") + " ")
-		} else {
-			sb.WriteString(dimStyle.Render(opt) + " ")
-		}
-	}
-	sb.WriteString("\n")
-
-	sb.WriteString("\n" + dimStyle.Render("  tab=next  enter=save  esc=cancel"))
+	sb.WriteString("\n" + dimStyle.Render("  "+hint))
 
 	return sb.String()
 }
