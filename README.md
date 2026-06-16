@@ -18,7 +18,7 @@
 fleet                          # interactive wizard: pick a project, a team, launch
 fleet dispatch "fix the failing auth test" --to auditor
 fleet logs dev -f              # follow an agent's terminal
-fleet --status                 # relay-backed status: sessions, registration, task counts
+fleet --status                 # readable status: who's idle vs working, and how long since seen
 ```
 
 ## Why
@@ -36,10 +36,12 @@ fleet treats tokens as the scarce resource:
 
 - **Interactive wizard** (Bubble Tea TUI): pick a project, point at a path, confirm the relay URL (validated on the spot, defaults to the local relay), pick a team, launch.
 - **Stack scanner**: detects the project's tech stack and suggests matching agent roles.
-- **7 team presets**: Web App, API / Backend, Data / ML, Trading Bot, Full Stack, Minimal, Custom. Each is a ready-made set of agents with roles and a reporting structure.
+- **10 team presets**: Web App, API / Backend, Data / ML, Trading Bot, Full Stack, Minimal, Solo Pair, Design Studio, Security Hardening, Custom. Each is a ready-made set of agents with roles, models, and a reporting structure.
+- **Per-agent behavioral config**: each agent carries its own model, persona, skills, tool scope, and permission mode. An agent whose name matches a known role (`dev`, `auditor`, `ops`, `frontend`, …) gets a ready-made persona at launch — no config needed.
 - **tmux session per agent**, opened together in an **iTerm2 grid** (falls back to `tmux attach`).
 - **Task dispatch + wake** in one step, routed through the relay.
 - **Live logs**: stream any agent's pane, follow mode polls once a second.
+- **Readable status**: `fleet --status` shows each agent's derived state (idle / working), posture, and last-seen — with a legend — instead of a raw registration flag.
 - **Runtime fleet management**: `add` and `stop` agents without restarting the team.
 - **Doctor**: checks tmux, the Claude Code CLI, iTerm2, and the relay, with install hints.
 - **Persistent config**: every launch is saved as TOML, relaunch with `fleet --last`.
@@ -94,7 +96,7 @@ coord is an independent MIT reimplementation of the [wrai.th](https://github.com
 ```bash
 fleet                         # interactive wizard
 fleet --last                  # relaunch the last saved fleet
-fleet --status                # sessions + relay state and task counts per agent
+fleet --status                # per-agent state: idle / working, posture, last seen
 fleet usage                   # per-project usage: agents, polling, tasks, vault
 fleet --kill                  # stop the last project's fleet
 fleet --kill-all              # stop every fleet across all projects (asks y/N)
@@ -109,7 +111,18 @@ fleet stop <agent>                     # graceful /exit, then kill if needed
 
 `fleet --kill-all` stops every project's sessions, so it asks for a `y/N` confirmation first; pass `--force` to skip the prompt in scripts. `--relay-url` works on every command and beats the project's saved `relay_url`, which beats the built-in default (`http://localhost:8090/mcp`).
 
-`fleet --status` uses the relay as the source of truth: each tmux session shows its relay registration and workload (`[relay: active · 2 task(s)]`), sessions the relay does not know show `[relay: unregistered]`, and relay-registered agents without a session appear as ghosts (`no tmux session`). If the relay is down, status degrades to a `⚠ relay unavailable` warning followed by the tmux sessions only.
+`fleet --status` reads the coordination core as the source of truth and renders each agent's *operator state* — not a raw registration flag:
+
+```
+    [acme-api]
+      dev      [working · on-demand · 1 task(s) · seen 12s ago]
+      auditor  [idle · auto-talk · seen 2m ago]
+      ops      [idle · on-demand · seen 5m ago]
+
+  idle = registered, in standby (token discipline). Wake: fleet dispatch --to <agent> "<task>"
+```
+
+State is derived from the live task count: `idle` (registered, no active task), `working` (one or more active tasks), or `registered` when the count is unknown. Each line also carries the agent's posture (`auto-talk` greets at boot vs `on-demand` woken on dispatch) and when it was last seen. Agents the core doesn't know show `unregistered`, registered agents without a tmux session appear as ghosts (`no tmux session`), and if the core is down the view degrades to a `⚠` warning followed by the tmux sessions only.
 
 ## Architecture
 
