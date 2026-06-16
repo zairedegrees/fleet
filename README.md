@@ -14,6 +14,8 @@
 
 ![The fleet wizard — pick a project, confirm the relay, choose a team preset, and launch](docs/fleet-wizard.gif)
 
+![fleet --status: agents sit idle by default; one flips to working after a dispatch — derived state, posture, and last-seen at a glance](docs/fleet-status.gif)
+
 ```bash
 fleet                          # interactive wizard: pick a project, a team, launch
 fleet dispatch "fix the failing auth test" --to auditor
