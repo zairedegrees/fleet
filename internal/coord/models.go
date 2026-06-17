@@ -114,3 +114,14 @@ type Conversation struct {
 	LastMessageAt string `json:"last_message_at"`
 	Status        string `json:"status"`
 }
+
+// Goal is a high-level objective that groups tasks (via tasks.goal_id).
+type Goal struct {
+	ID          string `json:"id"`
+	Project     string `json:"project"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+	Status      string `json:"status"`
+}

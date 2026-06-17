@@ -175,6 +175,14 @@ var toolDefs = []toolDef{
 			"status":  strProp("Optional: filter by status (e.g. 'open')."),
 			"limit":   numProp("Max conversations to return (default 20)."),
 		})},
+
+	{"create_goal", "Create a high-level goal that groups tasks. Dispatch tasks under it with dispatch_task(goal_id=...), then track progress with get_goal / list_goals.",
+		schema(map[string]any{
+			"project":     projectProp,
+			"as":          asProp,
+			"title":       strProp("Short goal title."),
+			"description": strProp("Optional: what the goal is about."),
+		}, "title")},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
