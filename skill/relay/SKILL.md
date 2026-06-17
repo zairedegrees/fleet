@@ -54,6 +54,20 @@ they leave your inbox.
 `send_message(as, project, to: "<agent>", subject: "...", content: "...")`. Use
 `to: "*"` to broadcast. Priority `P0` (interrupt) … `P3` (info), default `P2`.
 
+### `conversations` — multi-turn threads
+For a back-and-forth (e.g. a review discussion), keep it in one thread instead
+of loose messages:
+- `start_conversation(as, project, subject, [to], [content])` → opens a named
+  thread and returns its `id`; pass `to`+`content` to post the first message in
+  one call.
+- Reply with `send_message(..., conversation_id: "<id>")`.
+- `get_conversation(project, conversation_id, [limit], [before])` → pull the
+  thread (recent messages, chronological) when you need the full context.
+- `list_conversations(as, project)` → the threads you're in, with unread counts.
+
+Thread messages still land in your `inbox` with their `conversation_id` — fetch
+the whole thread only when you need the broader context (token discipline).
+
 ### `agents`
 `list_agents(project)` → table of name / role / status.
 
