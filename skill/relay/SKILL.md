@@ -78,6 +78,11 @@ the whole thread only when you need the broader context (token discipline).
 - Delegate: `dispatch_task(project, profile: "<profile>", title, description,
   priority)` — routes to agents on that profile and notifies them.
 
+### `goals` — group tasks under an objective
+- `create_goal(as, project, title, [description])` → open a goal, returns its `id`.
+- Dispatch work under it: `dispatch_task(..., goal_id: "<id>")` (an unknown id is rejected).
+- Track it: `get_goal(project, goal_id)` → progress counts (total / done / in_progress / blocked); `list_goals(project)` → your goals with done/total; `list_tasks(project, goal_id: "<id>")` → the goal's tasks.
+
 ### `memory`
 - `set_memory(project, key, value, scope)` — `scope` is `agent` | `project` |
   `global` (default `project`). A changed value versions the old one.

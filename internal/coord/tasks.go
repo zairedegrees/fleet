@@ -21,7 +21,7 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 // dispatchTask inserts a pending task routed to profileSlug, then fans out an
 // inbox notification to every active agent running that profile except the
 // dispatcher. Task insert + notifications are one serialized transaction.
-func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority string) (*Task, error) {
+func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority, goalID string) (*Task, error) {
 	if priority == "" {
 		priority = "P2"
 	}
@@ -29,12 +29,23 @@ func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, descript
 	task := &Task{
 		ID: newID(), ProfileSlug: profileSlug, DispatchedBy: dispatchedBy, Title: title,
 		Description: description, Priority: priority, Status: "pending", Project: project, DispatchedAt: now,
+		GoalID: optionalString(goalID),
 	}
 
 	err := s.write(func(tx *sql.Tx) error {
+		if goalID != "" {
+			var one int
+			err := tx.QueryRow("SELECT 1 FROM goals WHERE id = ? AND project = ?", goalID, project).Scan(&one)
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("unknown goal_id %q — create_goal first", goalID)
+			}
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(
-			"INSERT INTO tasks (id, profile_slug, dispatched_by, title, description, priority, status, project, dispatched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			task.ID, task.ProfileSlug, task.DispatchedBy, task.Title, task.Description, task.Priority, task.Status, task.Project, task.DispatchedAt); err != nil {
+			"INSERT INTO tasks (id, profile_slug, dispatched_by, title, description, priority, status, project, dispatched_at, goal_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			task.ID, task.ProfileSlug, task.DispatchedBy, task.Title, task.Description, task.Priority, task.Status, task.Project, task.DispatchedAt, task.GoalID); err != nil {
 			return err
 		}
 
@@ -93,7 +104,7 @@ func insertMessageTx(tx *sql.Tx, project, from, to, msgType, subject, content, m
 // listTasks mirrors wrai.th: default limit 50, non-archived, status "active"
 // excludes done/cancelled, ordered by P0..P3 then dispatched_at DESC, capped by
 // LIMIT. count is taken from the returned page (after the cap) by the handler.
-func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo string, limit int) ([]Task, error) {
+func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo, goalID string, limit int) ([]Task, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -118,6 +129,10 @@ func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo str
 	if assignedTo != "" {
 		query += " AND assigned_to = ?"
 		args = append(args, assignedTo)
+	}
+	if goalID != "" {
+		query += " AND goal_id = ?"
+		args = append(args, goalID)
 	}
 
 	query += " ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END, dispatched_at DESC LIMIT ?"
@@ -377,6 +392,7 @@ func handleDispatchTask(s *Server, args map[string]any) (toolResult, error) {
 		title,
 		argString(args, "description"),
 		argStringDefault(args, "priority", "P2"),
+		argString(args, "goal_id"),
 	)
 	if err != nil {
 		return toolResult{}, err
@@ -391,6 +407,7 @@ func handleListTasks(s *Server, args map[string]any) (toolResult, error) {
 		argString(args, "profile"), // same key as dispatch_task
 		argString(args, "priority"),
 		argString(args, "assigned_to"),
+		argString(args, "goal_id"),
 		argInt(args, "limit", 50),
 	)
 	if err != nil {

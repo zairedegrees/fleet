@@ -78,6 +78,7 @@ var toolDefs = []toolDef{
 			"title":       strProp("Short task title."),
 			"description": strProp("What to do and acceptance criteria."),
 			"priority":    strProp("P0 (interrupt) .. P3 (info). Default P2."),
+			"goal_id":     strProp("Optional: attach this task to a goal (must exist; see create_goal)."),
 		}, "profile", "title")},
 
 	{"list_tasks", "List tasks in a project, ordered by priority then recency. status='active' excludes done/cancelled. count reflects the returned page.",
@@ -87,6 +88,7 @@ var toolDefs = []toolDef{
 			"status":      strProp("Filter by status, or 'active' for non-terminal."),
 			"priority":    strProp("Filter by priority (P0-P3)."),
 			"assigned_to": strProp("Filter by assigned agent."),
+			"goal_id":     strProp("Filter by goal."),
 			"limit":       numProp("Max tasks to return (default 50)."),
 		})},
 
@@ -174,6 +176,27 @@ var toolDefs = []toolDef{
 			"as":      asProp,
 			"status":  strProp("Optional: filter by status (e.g. 'open')."),
 			"limit":   numProp("Max conversations to return (default 20)."),
+		})},
+
+	{"create_goal", "Create a high-level goal that groups tasks. Dispatch tasks under it with dispatch_task(goal_id=...), then track progress with get_goal / list_goals.",
+		schema(map[string]any{
+			"project":     projectProp,
+			"as":          asProp,
+			"title":       strProp("Short goal title."),
+			"description": strProp("Optional: what the goal is about."),
+		}, "title")},
+
+	{"get_goal", "Get a goal and its derived progress (task counts: total, done, in_progress, blocked). Use list_tasks(goal_id=...) for the tasks themselves.",
+		schema(map[string]any{
+			"project": projectProp,
+			"goal_id": strProp("The goal id."),
+		}, "goal_id")},
+
+	{"list_goals", "List goals in a project, most recent first, each with done/total task progress. Compact — no descriptions; use get_goal for one goal's full progress.",
+		schema(map[string]any{
+			"project": projectProp,
+			"status":  strProp("Optional: filter by status (e.g. 'open')."),
+			"limit":   numProp("Max goals to return (default 50)."),
 		})},
 }
 
