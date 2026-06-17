@@ -203,7 +203,7 @@ var toolDefs = []toolDef{
 		schema(map[string]any{
 			"project": projectProp,
 			"name":    strProp("Agent name the channel belongs to."),
-			"target":  strProp("Wake target, e.g. 'tmux:<session>'."),
+			"target":  strProp("Wake target. Must start with 'tmux:' (e.g. 'tmux:<session>'); other schemes are rejected."),
 		}, "name", "target")},
 }
 

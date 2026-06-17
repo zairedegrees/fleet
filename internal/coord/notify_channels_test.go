@@ -4,12 +4,7 @@ import "testing"
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	store, err := OpenStore(t.TempDir() + "/coord.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	return New(store)
+	return New(newTestStore(t))
 }
 
 func TestRegisterNotifyChannelRoundTrip(t *testing.T) {
@@ -36,6 +31,34 @@ func TestRegisterNotifyChannelRequiresFields(t *testing.T) {
 	}
 	if res, _ := handleRegisterNotifyChannel(s, map[string]any{"project": "acme", "name": "dev"}); !res.IsError {
 		t.Error("missing target must error")
+	}
+}
+
+func TestRegisterNotifyChannelRejectsNonTmuxTarget(t *testing.T) {
+	s := newTestServer(t)
+	res, err := handleRegisterNotifyChannel(s, map[string]any{
+		"project": "acme", "name": "dev", "target": "http://example.com",
+	})
+	if err != nil || !res.IsError {
+		t.Fatalf("non-tmux target must error, got err=%v res=%+v", err, res)
+	}
+	if _, ok, err := s.NotifyChannelTarget("acme", "dev"); err != nil || ok {
+		t.Fatalf("rejected target must not be stored, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRegisterNotifyChannelFoldsName(t *testing.T) {
+	s := newTestServer(t)
+	res, err := handleRegisterNotifyChannel(s, map[string]any{
+		"project": "acme", "name": "Dev", "target": "tmux:fleet-acme-dev",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("register failed: err=%v res=%+v", err, res)
+	}
+	// register_agent stores the lowercased name; the waker looks up "dev".
+	target, ok, err := s.NotifyChannelTarget("acme", "dev")
+	if err != nil || !ok || target != "tmux:fleet-acme-dev" {
+		t.Fatalf("case-folded lookup failed: target=%q ok=%v err=%v", target, ok, err)
 	}
 }
 

@@ -1,6 +1,9 @@
 package coord
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // registerNotifyChannel records a wake target for an agent (the reserved
 // agent_notify_channels table). Re-registering the same triple is a no-op.
@@ -34,13 +37,21 @@ func (s *Server) NotifyChannelTarget(project, agent string) (string, bool, error
 }
 
 func handleRegisterNotifyChannel(s *Server, args map[string]any) (toolResult, error) {
-	agent := argString(args, "name")
+	// Lowercase the name to match register_agent / deactivate_agent, so the
+	// waker's lookup (keyed on the agent's stored, lowercased name) hits.
+	agent := strings.ToLower(argString(args, "name"))
 	if agent == "" {
 		return resultError("name is required"), nil
 	}
 	target := argString(args, "target")
 	if target == "" {
 		return resultError("target is required"), nil
+	}
+	// Only tmux targets are surfaced by notifyChannelTarget; reject anything
+	// else at write time so a typo'd scheme fails loudly instead of registering
+	// a silent black hole the waker can never read back.
+	if !strings.HasPrefix(target, "tmux:") {
+		return resultError("target must start with 'tmux:'"), nil
 	}
 	if err := s.store.registerNotifyChannel(resolveProject(args), agent, target); err != nil {
 		return toolResult{}, err
