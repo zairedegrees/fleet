@@ -200,6 +200,22 @@ func (s *Store) markRead(messageIDs []string, agent, project string) (int, error
 	return count, nil
 }
 
+// isExecutive reports whether an agent is flagged is_executive in the project.
+// An unregistered/unknown agent is not executive.
+func (s *Store) isExecutive(project, agent string) (bool, error) {
+	var exec bool
+	err := s.reader().QueryRow(
+		"SELECT is_executive FROM agents WHERE name = ? AND project = ?",
+		agent, project).Scan(&exec)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return exec, nil
+}
+
 // --- handlers ---
 
 func handleSendMessage(s *Server, args map[string]any) (toolResult, error) {
@@ -209,6 +225,15 @@ func handleSendMessage(s *Server, args map[string]any) (toolResult, error) {
 	}
 	if argString(args, "content") == "" {
 		return resultError("content is required"), nil
+	}
+	if to == "*" {
+		ok, err := s.store.isExecutive(resolveProject(args), resolveAgent(args))
+		if err != nil {
+			return toolResult{}, err
+		}
+		if !ok {
+			return resultError("only executives can broadcast — send to a specific agent"), nil
+		}
 	}
 	msg, err := s.store.sendMessage(
 		resolveProject(args),
