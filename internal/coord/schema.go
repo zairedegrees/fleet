@@ -189,6 +189,17 @@ CREATE TABLE IF NOT EXISTS conversations (
   status TEXT NOT NULL DEFAULT 'open'
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_project_activity ON conversations(project, last_message_at);
+
+CREATE TABLE IF NOT EXISTS goals (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS idx_goals_project ON goals(project, created_at);
 `
 
 // schemaTables is the set of tables migrate must create. The store's migration
@@ -196,5 +207,5 @@ CREATE INDEX IF NOT EXISTS idx_conversations_project_activity ON conversations(p
 var schemaTables = []string{
 	"agents", "profiles", "tasks", "messages", "deliveries",
 	"message_reads", "memories", "orgs", "projects", "teams",
-	"team_members", "agent_notify_channels", "conversations",
+	"team_members", "agent_notify_channels", "conversations", "goals",
 }
