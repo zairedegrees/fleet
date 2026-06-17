@@ -201,7 +201,7 @@ func TestListTasksFilterByGoal(t *testing.T) {
 		Goal Goal `json:"goal"`
 	}
 	decodePayload(t, gr, &g)
-	dispatchTaskID(t, s, g.Goal.ID)                                                                                  // under the goal
+	dispatchTaskID(t, s, g.Goal.ID)                                                                                   // under the goal
 	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "as": "lead", "profile": "dev", "title": "loose"}) // no goal
 
 	res := mustCall(t, s, "list_tasks", map[string]any{"project": "p", "goal_id": g.Goal.ID})
