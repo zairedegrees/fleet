@@ -87,7 +87,7 @@ func newProjectPanel() projectPanel {
 
 	existing := discoverProjects()
 
-	// Pre-pose the cursor on the last-launched project (last.toml target). Falls
+	// Pre-set the cursor on the last-launched project (last.toml target). Falls
 	// back to 0 (the most recent by mtime) when there is no last.toml.
 	cursor := 0
 	if cfg, err := config.LoadLast(); err == nil {
@@ -153,7 +153,11 @@ func discoverProjects() []existingProject {
 		}
 	}
 
-	// 3. Check last.toml symlink
+	// 3. Check last.toml symlink. Normally last.toml → configs/<name>.toml, so
+	// the configs scan above already added this project and `seen` skips it.
+	// This branch is the orphan-recovery path: the config was deleted but
+	// last.toml still resolves. A dangling symlink makes os.Stat error, leaving
+	// mt zero (sinks to bottom), which is fine.
 	lastPath := filepath.Join(config.FleetDir(), "last.toml")
 	if cfg, err := config.Load(lastPath); err == nil {
 		if !seen[cfg.Project.Name] {

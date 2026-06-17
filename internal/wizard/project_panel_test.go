@@ -159,12 +159,18 @@ func TestDiscoverProjectsSortedByRecency(t *testing.T) {
 	write("newest", 1*time.Minute)
 	write("middle", 1*time.Hour)
 
+	// A config-less project (projects file only, no mtime) must sink below all
+	// mtime-backed entries.
+	if err := os.WriteFile(filepath.Join(home, ".fleet", "projects"), []byte("orphan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	var names []string
 	for _, p := range discoverProjects() {
 		names = append(names, p.name)
 	}
-	if got := strings.Join(names, ","); got != "newest,middle,old" {
-		t.Errorf("recency order = %q, want newest,middle,old", got)
+	if got := strings.Join(names, ","); got != "newest,middle,old,orphan" {
+		t.Errorf("recency order = %q, want newest,middle,old,orphan", got)
 	}
 }
 
