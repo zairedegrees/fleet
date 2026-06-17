@@ -265,7 +265,10 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.activePanel == panelLeft {
 						m.activePanel = panelRight
 					} else {
+						// The hub is the left panel's home: tabbing back always
+						// lands there, even from the preset chooser.
 						m.activePanel = panelLeft
+						m.project.focus = focusSettings
 					}
 					return m, nil
 				}
@@ -364,7 +367,7 @@ func (m wizardModel) View() string {
 	} else if m.activePanel == panelLeft && m.project.focus == focusSettings {
 		help = "j/k move · enter edit · tab agents · esc back"
 	} else if m.activePanel == panelLeft && m.project.focus == focusPresets {
-		help = "j/k move · enter select · esc back"
+		help = "j/k move · enter select · tab agents · esc back"
 	} else if m.activePanel == panelLeft {
 		help = "j/k move · enter select · q quit"
 	} else {
