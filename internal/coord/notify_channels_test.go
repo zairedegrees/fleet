@@ -85,9 +85,9 @@ func TestRegisterNotifyChannelIsOperatorOnly(t *testing.T) {
 	}
 }
 
-// agentsWithPendingTasks returns recipients of unread (queued) task-type
-// messages that have a registered notify channel — excludes read, non-task,
-// and channel-less recipients.
+// TestAgentsWithPendingTasks verifies the sweep returns recipients of unread
+// (queued) task-type messages that have a registered notify channel — excluding
+// read, non-task, and channel-less recipients.
 func TestAgentsWithPendingTasks(t *testing.T) {
 	s := newTestServer(t)
 	// Seed two active agents on profile "dev" (mirror the existing seeding helper).
@@ -123,5 +123,99 @@ func TestAgentsWithPendingTasksExcludesChannelless(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("channel-less recipient must be excluded, got %+v", got)
+	}
+}
+
+// A task the agent polled (delivery surfaced via get_inbox) but never mark_read'd
+// is still unread — the sweep must keep waking it. This mirrors getInbox's
+// pending definition (state IN ('queued','surfaced')); a queued-only filter would
+// silently drop idle agents that fetched but never acted, the exact case the
+// waker exists for.
+func TestAgentsWithPendingTasksIncludesSurfaced(t *testing.T) {
+	s := newTestServer(t)
+	seedActiveAgent(t, s, "acme", "worker", "dev")
+	seedActiveAgent(t, s, "acme", "lead", "dev")
+	_ = s.store.registerNotifyChannel("acme", "worker", "tmux:fleet-acme-worker")
+	if _, _, err := s.store.dispatchTask("acme", "dev", "lead", "ship it", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	// Polling the inbox surfaces the queued delivery (queued → surfaced).
+	if _, err := s.store.getInbox("acme", "worker", false, 50); err != nil {
+		t.Fatalf("get_inbox: %v", err)
+	}
+
+	got, err := s.AgentsWithPendingTasks()
+	if err != nil {
+		t.Fatalf("query err: %v", err)
+	}
+	if len(got) != 1 || got[0].Agent != "worker" || got[0].Project != "acme" {
+		t.Fatalf("surfaced (unread) task must remain a wake candidate, got %+v", got)
+	}
+}
+
+// Once the agent mark_read's the task (delivery → acknowledged) it is no longer
+// unread and must drop out of the sweep.
+func TestAgentsWithPendingTasksExcludesAcknowledged(t *testing.T) {
+	s := newTestServer(t)
+	seedActiveAgent(t, s, "acme", "worker", "dev")
+	seedActiveAgent(t, s, "acme", "lead", "dev")
+	_ = s.store.registerNotifyChannel("acme", "worker", "tmux:fleet-acme-worker")
+	if _, _, err := s.store.dispatchTask("acme", "dev", "lead", "ship it", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	// The dispatch notification is the only task-typed message to worker; mark it
+	// read so its delivery moves to 'acknowledged'.
+	inbox, err := s.store.getInbox("acme", "worker", false, 50)
+	if err != nil {
+		t.Fatalf("get_inbox: %v", err)
+	}
+	var ids []string
+	for _, m := range inbox {
+		if m.Type == "task" {
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(ids) == 0 {
+		t.Fatalf("expected a task-typed dispatch message for worker, inbox=%+v", inbox)
+	}
+	if _, err := s.store.markRead(ids, "worker", "acme"); err != nil {
+		t.Fatalf("mark_read: %v", err)
+	}
+
+	got, err := s.AgentsWithPendingTasks()
+	if err != nil {
+		t.Fatalf("query err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("acknowledged (read) task must be excluded, got %+v", got)
+	}
+}
+
+// project is the isolation boundary: a pending task in one project must not leak
+// into another's sweep, and each candidate carries its own project. The channel
+// join is keyed on (agent_name, project), so a same-named agent in a project
+// without a channel must also be excluded.
+func TestAgentsWithPendingTasksIsolatesProjects(t *testing.T) {
+	s := newTestServer(t)
+	// acme/worker: pending task + channel → candidate.
+	seedActiveAgent(t, s, "acme", "worker", "dev")
+	seedActiveAgent(t, s, "acme", "lead", "dev")
+	_ = s.store.registerNotifyChannel("acme", "worker", "tmux:fleet-acme-worker")
+	if _, _, err := s.store.dispatchTask("acme", "dev", "lead", "a", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch acme: %v", err)
+	}
+	// beta/worker: pending task but NO channel in beta → excluded.
+	seedActiveAgent(t, s, "beta", "worker", "dev")
+	seedActiveAgent(t, s, "beta", "lead", "dev")
+	if _, _, err := s.store.dispatchTask("beta", "dev", "lead", "b", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch beta: %v", err)
+	}
+
+	got, err := s.AgentsWithPendingTasks()
+	if err != nil {
+		t.Fatalf("query err: %v", err)
+	}
+	if len(got) != 1 || got[0].Project != "acme" || got[0].Agent != "worker" {
+		t.Fatalf("want only [acme/worker]; beta has no channel and must not leak, got %+v", got)
 	}
 }

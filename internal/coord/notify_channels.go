@@ -36,20 +36,24 @@ func (s *Server) NotifyChannelTarget(project, agent string) (string, bool, error
 	return s.store.notifyChannelTarget(project, agent)
 }
 
-// agentsWithPendingTasks lists recipients of unread (queued) task-type messages
-// that have a registered tmux notify channel — the sweep's wake candidates.
+// agentsWithPendingTasks lists recipients of unread task-type messages that have
+// a registered tmux notify channel — the sweep's wake candidates. "Unread" means
+// the delivery is still 'queued' or 'surfaced': this mirrors getInbox's own
+// definition of pending, so an agent that polled its inbox (surfacing the task)
+// but never mark_read'd it is still a wake candidate. Only 'acknowledged'
+// deliveries (set by markRead) are treated as done and excluded.
 func (s *Store) agentsWithPendingTasks() ([]WakeRequest, error) {
 	rows, err := s.reader().Query(`
 		SELECT DISTINCT d.project, d.to_agent
 		FROM deliveries d
 		JOIN messages m ON d.message_id = m.id
 		JOIN agent_notify_channels c ON c.agent_name = d.to_agent AND c.project = d.project
-		WHERE d.state = 'queued' AND m.type = 'task' AND m.expired_at IS NULL`)
+		WHERE d.state IN ('queued', 'surfaced') AND m.type = 'task' AND m.expired_at IS NULL`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []WakeRequest
+	out := []WakeRequest{}
 	for rows.Next() {
 		var w WakeRequest
 		if err := rows.Scan(&w.Project, &w.Agent); err != nil {
