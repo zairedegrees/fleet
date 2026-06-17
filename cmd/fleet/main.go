@@ -55,6 +55,8 @@ var (
 	flagStatus       bool
 	flagDoctor       bool
 	flagForce        bool
+	flagWatch        bool
+	flagInterval     time.Duration
 	flagRelayURL     string
 	flagRelayBackend string
 )
@@ -84,6 +86,8 @@ func main() {
 	root.Flags().BoolVar(&flagKill, "kill", false, "Stop fleet sessions for the last project")
 	root.Flags().BoolVar(&flagKillAll, "kill-all", false, "Stop ALL fleet sessions across all projects")
 	root.Flags().BoolVar(&flagStatus, "status", false, "List active fleet sessions")
+	root.Flags().BoolVar(&flagWatch, "watch", false, "With --status: refresh continuously until ctrl+c")
+	root.Flags().DurationVar(&flagInterval, "interval", 2*time.Second, "Refresh interval for --status --watch")
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
 	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
 	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")

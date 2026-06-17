@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
@@ -97,12 +101,59 @@ func statusOnce() (string, error) {
 }
 
 func runStatus() error {
+	if flagWatch {
+		return runStatusWatch()
+	}
 	out, err := statusOnce()
 	if err != nil {
 		return err
 	}
 	fmt.Print(out)
 	return nil
+}
+
+// runStatusWatch refreshes the status on a ticker until ctrl+c. All work is
+// read-only (relay + tmux), so an idle fleet still costs zero LLM tokens.
+func runStatusWatch() error {
+	interval := flagInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	render := func() string {
+		out, err := statusOnce()
+		if err != nil {
+			return "  ⚠ " + err.Error() + "\n"
+		}
+		return out
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	watchStatus(os.Stdout, interval, render, ticker.C, sig)
+	return nil
+}
+
+// watchStatus draws render() immediately, then clears and redraws on every tick,
+// until a stop signal. interval is shown in the header; the real cadence comes
+// from tick (injected, so this is deterministically testable).
+func watchStatus(out io.Writer, interval time.Duration, render func() string, tick <-chan time.Time, stop <-chan os.Signal) {
+	draw := func() {
+		fmt.Fprint(out, "\x1b[2J\x1b[H") // clear screen + cursor home
+		fmt.Fprintf(out, "  refreshing every %s · ctrl+c to quit\n\n", interval)
+		fmt.Fprint(out, render())
+	}
+	draw()
+	for {
+		select {
+		case <-stop:
+			fmt.Fprintln(out) // leave the cursor on a clean line
+			return
+		case <-tick:
+			draw()
+		}
+	}
 }
 
 // buildStatus turns the tmux session list + saved configs into the per-project
