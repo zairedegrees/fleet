@@ -193,3 +193,32 @@ func TestListGoalsEmpty(t *testing.T) {
 		t.Errorf("expected 0 goals, got %d", got.Count)
 	}
 }
+
+func TestListTasksFilterByGoal(t *testing.T) {
+	s := New(newTestStore(t))
+	gr := mustCall(t, s, "create_goal", map[string]any{"project": "p", "as": "lead", "title": "G"})
+	var g struct {
+		Goal Goal `json:"goal"`
+	}
+	decodePayload(t, gr, &g)
+	dispatchTaskID(t, s, g.Goal.ID)                                                                                  // under the goal
+	mustCall(t, s, "dispatch_task", map[string]any{"project": "p", "as": "lead", "profile": "dev", "title": "loose"}) // no goal
+
+	res := mustCall(t, s, "list_tasks", map[string]any{"project": "p", "goal_id": g.Goal.ID})
+	var got struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 1 {
+		t.Errorf("expected only the goal's task, got %d", got.Count)
+	}
+
+	all := mustCall(t, s, "list_tasks", map[string]any{"project": "p"})
+	var allGot struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, all, &allGot)
+	if allGot.Count != 2 {
+		t.Errorf("unfiltered list should show both tasks, got %d", allGot.Count)
+	}
+}

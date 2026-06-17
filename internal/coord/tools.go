@@ -88,6 +88,7 @@ var toolDefs = []toolDef{
 			"status":      strProp("Filter by status, or 'active' for non-terminal."),
 			"priority":    strProp("Filter by priority (P0-P3)."),
 			"assigned_to": strProp("Filter by assigned agent."),
+			"goal_id":     strProp("Filter by goal."),
 			"limit":       numProp("Max tasks to return (default 50)."),
 		})},
 

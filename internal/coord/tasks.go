@@ -104,7 +104,7 @@ func insertMessageTx(tx *sql.Tx, project, from, to, msgType, subject, content, m
 // listTasks mirrors wrai.th: default limit 50, non-archived, status "active"
 // excludes done/cancelled, ordered by P0..P3 then dispatched_at DESC, capped by
 // LIMIT. count is taken from the returned page (after the cap) by the handler.
-func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo string, limit int) ([]Task, error) {
+func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo, goalID string, limit int) ([]Task, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -129,6 +129,10 @@ func (s *Store) listTasks(project, status, profileSlug, priority, assignedTo str
 	if assignedTo != "" {
 		query += " AND assigned_to = ?"
 		args = append(args, assignedTo)
+	}
+	if goalID != "" {
+		query += " AND goal_id = ?"
+		args = append(args, goalID)
 	}
 
 	query += " ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 END, dispatched_at DESC LIMIT ?"
@@ -403,6 +407,7 @@ func handleListTasks(s *Server, args map[string]any) (toolResult, error) {
 		argString(args, "profile"), // same key as dispatch_task
 		argString(args, "priority"),
 		argString(args, "assigned_to"),
+		argString(args, "goal_id"),
 		argInt(args, "limit", 50),
 	)
 	if err != nil {
