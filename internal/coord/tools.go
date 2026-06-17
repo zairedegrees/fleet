@@ -149,3 +149,28 @@ var toolDefs = []toolDef{
 	{"list_orgs", "List organizations. Used as the relay health probe.",
 		schema(map[string]any{})},
 }
+
+// operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
+// name) but NOT advertised on tools/list. Agents never call them — fleet
+// registers agents and profiles server-side and drives orchestration — so
+// keeping them out of every agent's catalog trims ~780 tokens of context per
+// agent. Dropping register_agent also enforces the no-self-register design: an
+// agent can't call a tool it never sees.
+var operatorOnly = map[string]bool{
+	"register_agent":   true,
+	"register_profile": true,
+	"deactivate_agent": true,
+	"list_orgs":        true,
+}
+
+// advertisedTools is the tools/list catalog: every toolDef except operator-only
+// ones. tools/call still dispatches all handlers (see the handlers map).
+func advertisedTools() []toolDef {
+	out := make([]toolDef, 0, len(toolDefs))
+	for _, t := range toolDefs {
+		if !operatorOnly[t.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
+}

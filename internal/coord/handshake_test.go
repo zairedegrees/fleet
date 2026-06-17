@@ -44,18 +44,37 @@ func TestToolsListMatchesHandlers(t *testing.T) {
 		listed[td.Name] = true
 	}
 
-	// The advertised catalog and the dispatch registry must agree exactly — an
-	// advertised-but-unimplemented tool (or vice versa) would silently break a
-	// real agent's discovery.
+	// Advertised tools must all have handlers; handlers may be advertised OR
+	// operator-only (handled on tools/call by the fleet CLI but kept out of the
+	// agents' catalog to save context tokens).
 	for name := range handlers {
-		if !listed[name] {
-			t.Errorf("handler %q is not advertised in tools/list", name)
+		if !listed[name] && !operatorOnly[name] {
+			t.Errorf("handler %q is neither advertised nor operator-only", name)
 		}
 	}
 	for name := range listed {
 		if _, ok := handlers[name]; !ok {
 			t.Errorf("advertised tool %q has no handler", name)
 		}
+		if operatorOnly[name] {
+			t.Errorf("operator-only tool %q must not be advertised", name)
+		}
+	}
+}
+
+func TestOperatorOnlyToolsStillDispatch(t *testing.T) {
+	s := New(newTestStore(t))
+	// register_agent is not advertised, but the fleet CLI calls it by name —
+	// it must still execute, not return "not supported".
+	res := mustCall(t, s, "register_agent", map[string]any{"name": "dev", "project": "p"})
+	var got struct {
+		Agent struct {
+			Name string `json:"name"`
+		} `json:"agent"`
+	}
+	decodePayload(t, res, &got)
+	if got.Agent.Name != "dev" {
+		t.Errorf("register_agent must still work via tools/call, got %+v", got)
 	}
 }
 
