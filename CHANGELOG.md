@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.7] — 2026-06-17
+
+### Changed
+- **Broadcast is executive-only.** `send_message(to="*")` is now restricted to
+  agents flagged `is_executive`; a non-executive (or anonymous/unregistered)
+  sender is rejected with a clear error and the message is not created. Direct
+  messages are unchanged — the gate applies only to `*`. This enforces the
+  permission the system already advertised to executives.
+
 ## [0.1.6] — 2026-06-17
 
 ### Added
