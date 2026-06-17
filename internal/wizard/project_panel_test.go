@@ -1,8 +1,11 @@
 package wizard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zairedegrees/fleet/internal/config"
@@ -53,8 +56,8 @@ func TestProjectPanelPathThenRelayURLFlow(t *testing.T) {
 
 	p.relayInput.SetValue("http://custom:9999/mcp")
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
-	if p.focus != focusPresets || !p.ready {
-		t.Fatalf("relay enter must confirm and move to presets, got focus=%v ready=%v", p.focus, p.ready)
+	if p.focus != focusSettings || !p.ready {
+		t.Fatalf("relay enter must confirm and move to settings, got focus=%v ready=%v", p.focus, p.ready)
 	}
 	if got := p.RelayURL(); got != "http://custom:9999/mcp" {
 		t.Errorf("RelayURL() = %q, want the entered URL", got)
@@ -94,8 +97,8 @@ func TestProjectPanelRelayURLInvalidRejectedOnSubmit(t *testing.T) {
 		if p.ready {
 			t.Errorf("%q: panel must not become ready with an invalid relay URL", raw)
 		}
-		if !strings.Contains(p.View(true), "relay URL") {
-			t.Errorf("%q: the panel must show the validation error, got:\n%s", raw, p.View(true))
+		if !strings.Contains(p.View(true, 0), "relay URL") {
+			t.Errorf("%q: the panel must show the validation error, got:\n%s", raw, p.View(true, 0))
 		}
 	}
 }
@@ -112,10 +115,10 @@ func TestProjectPanelRelayURLValidAfterInvalidProceeds(t *testing.T) {
 
 	p.relayInput.SetValue("http://localhost:9999/mcp")
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
-	if p.focus != focusPresets || !p.ready {
-		t.Fatalf("corrected URL must confirm and move to presets, got focus=%v ready=%v", p.focus, p.ready)
+	if p.focus != focusSettings || !p.ready {
+		t.Fatalf("corrected URL must confirm and move to settings, got focus=%v ready=%v", p.focus, p.ready)
 	}
-	if strings.Contains(p.View(true), "must start with") {
+	if strings.Contains(p.View(true, 0), "must start with") {
 		t.Error("a successful submit must clear the validation error")
 	}
 }
@@ -128,5 +131,170 @@ func TestProjectPanelRelayURLEscGoesBackToPath(t *testing.T) {
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEsc})
 	if p.focus != focusPath {
 		t.Errorf("esc must return to the path input, got focus %v", p.focus)
+	}
+}
+
+// Projects are listed most-recently-used first, by config file mtime; a
+// config-less project (no mtime) sinks to the bottom.
+func TestDiscoverProjectsSortedByRecency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".fleet", "configs")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, age time.Duration) {
+		p := filepath.Join(cfgDir, name+".toml")
+		if err := config.Save(p, &config.FleetConfig{
+			Project: config.ProjectConfig{Name: name, Cwd: "/tmp/" + name},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		mt := time.Now().Add(-age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("old", 3*time.Hour)
+	write("newest", 1*time.Minute)
+	write("middle", 1*time.Hour)
+
+	// A config-less project (projects file only, no mtime) must sink below all
+	// mtime-backed entries.
+	if err := os.WriteFile(filepath.Join(home, ".fleet", "projects"), []byte("orphan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, p := range discoverProjects() {
+		names = append(names, p.name)
+	}
+	if got := strings.Join(names, ","); got != "newest,middle,old,orphan" {
+		t.Errorf("recency order = %q, want newest,middle,old,orphan", got)
+	}
+}
+
+// In the settings hub, j/k move the cursor (clamped) and enter dives into the
+// focused field's editor.
+func TestProjectPanelSettingsNavigation(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+	p.settingsCursor = 0
+
+	j := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	p, _ = p.updateSettings(j)
+	if p.settingsCursor != 1 {
+		t.Fatalf("j must move to Relay (1), got %d", p.settingsCursor)
+	}
+	p, _ = p.updateSettings(j)
+	p, _ = p.updateSettings(j) // clamp at 2
+	if p.settingsCursor != 2 {
+		t.Fatalf("cursor must clamp at Team (2), got %d", p.settingsCursor)
+	}
+	p, _ = p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusPresets {
+		t.Fatalf("enter on Team must open the preset chooser, got focus %v", p.focus)
+	}
+}
+
+func TestProjectPanelSettingsEntersEditors(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+
+	p.settingsCursor = 0
+	pp, _ := p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if pp.focus != focusPath {
+		t.Fatalf("enter on Path must open the path editor, got %v", pp.focus)
+	}
+
+	p.settingsCursor = 1
+	pp, _ = p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if pp.focus != focusRelayURL {
+		t.Fatalf("enter on Relay must open the relay editor, got %v", pp.focus)
+	}
+}
+
+// Editing a field from the hub (ready) returns to the hub — not the new-project
+// linear chain.
+func TestProjectPanelHubEditReturnsToSettings(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+
+	p.focus = focusPath
+	p.pathInput.SetValue(t.TempDir())
+	p, _ = p.updatePathInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusSettings {
+		t.Fatalf("hub path-edit enter must return to settings, got %v", p.focus)
+	}
+
+	p.focus = focusRelayURL
+	p.relayInput.SetValue("http://x:1/mcp")
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusSettings {
+		t.Fatalf("hub relay-edit enter must return to settings, got %v", p.focus)
+	}
+
+	p.focus = focusRelayURL
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEsc})
+	if p.focus != focusSettings {
+		t.Fatalf("hub relay-edit esc must return to settings, got %v", p.focus)
+	}
+}
+
+// The settings hub renders Path / Relay / Team rows, with the live agent count.
+func TestProjectPanelSettingsView(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+	p.projName = "proj"
+	p.pathInput.SetValue("/tmp/proj")
+
+	out := p.View(true, 3)
+	for _, want := range []string{"Path:", "Relay:", "Team:", "3 agents"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("settings view missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// The cursor lands on the last-launched project (last.toml target), even when
+// it is not the most recent by mtime.
+func TestNewProjectPanelPreselectsLastProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".fleet", "configs")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, age time.Duration) string {
+		p := filepath.Join(cfgDir, name+".toml")
+		if err := config.Save(p, &config.FleetConfig{
+			Project: config.ProjectConfig{Name: name, Cwd: "/tmp/" + name},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		mt := time.Now().Add(-age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write("alpha", 1*time.Minute) // newest by mtime
+	betaPath := write("beta", 2*time.Hour)
+	write("gamma", 3*time.Hour)
+
+	// last.toml -> beta proves preselection follows last.toml, not index 0.
+	if err := os.Symlink(betaPath, filepath.Join(home, ".fleet", "last.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newProjectPanel()
+	if p.projectCursor >= len(p.existingProjects) {
+		t.Fatalf("cursor %d out of range (%d projects)", p.projectCursor, len(p.existingProjects))
+	}
+	if got := p.existingProjects[p.projectCursor].name; got != "beta" {
+		t.Errorf("preselected %q, want beta (last.toml target)", got)
 	}
 }

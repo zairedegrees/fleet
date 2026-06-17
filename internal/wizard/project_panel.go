@@ -5,7 +5,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +42,7 @@ type ProjectSelectedMsg struct {
 const (
 	focusProjectList leftFocus = 3
 	focusRelayURL    leftFocus = 4
+	focusSettings    leftFocus = 5
 )
 
 type projectPanel struct {
@@ -59,14 +62,18 @@ type projectPanel struct {
 	presets      []Preset
 	presetCursor int
 
+	// Settings hub cursor: 0=Path, 1=Relay, 2=Team
+	settingsCursor int
+
 	focus leftFocus
 	ready bool
 	width int
 }
 
 type existingProject struct {
-	name string
-	path string // cwd from saved config, empty if unknown
+	name    string
+	path    string    // cwd from saved config, empty if unknown
+	modTime time.Time // mtime of configs/<name>.toml; zero when config-less
 }
 
 func newProjectPanel() projectPanel {
@@ -84,16 +91,31 @@ func newProjectPanel() projectPanel {
 
 	existing := discoverProjects()
 
+	// Pre-set the cursor on the last-launched project (last.toml target). Falls
+	// back to 0 (the most recent by mtime) when there is no last.toml.
+	cursor := 0
+	if cfg, err := config.LoadLast(); err == nil {
+		for i, ep := range existing {
+			if ep.name == cfg.Project.Name {
+				cursor = i
+				break
+			}
+		}
+	}
+
 	return projectPanel{
 		pathInput:        pi,
 		relayInput:       ri,
 		presets:          AllPresets(),
 		existingProjects: existing,
+		projectCursor:    cursor,
 		focus:            focusProjectList,
 	}
 }
 
-// discoverProjects finds existing projects from configs and projects file.
+// discoverProjects finds existing projects from configs and projects file,
+// most-recently-used first (by config file mtime). Config-less projects (from
+// the projects file) have no mtime and sink to the bottom.
 func discoverProjects() []existingProject {
 	seen := make(map[string]bool)
 	var projects []existingProject
@@ -107,13 +129,16 @@ func discoverProjects() []existingProject {
 				name := strings.TrimSuffix(e.Name(), ".toml")
 				if !seen[name] {
 					seen[name] = true
-					// Try to load the config to get the cwd
+					var mt time.Time
+					if info, err := e.Info(); err == nil {
+						mt = info.ModTime()
+					}
 					path := ""
 					cfgPath := filepath.Join(configDir, e.Name())
 					if cfg, err := config.Load(cfgPath); err == nil {
 						path = cfg.Project.Cwd
 					}
-					projects = append(projects, existingProject{name: name, path: path})
+					projects = append(projects, existingProject{name: name, path: path, modTime: mt})
 				}
 			}
 		}
@@ -132,14 +157,34 @@ func discoverProjects() []existingProject {
 		}
 	}
 
-	// 3. Check last.toml symlink
+	// 3. Check last.toml symlink. Normally last.toml → configs/<name>.toml, so
+	// the configs scan above already added this project and `seen` skips it.
+	// This branch is the orphan-recovery path: the config was deleted but
+	// last.toml still resolves. A dangling symlink makes os.Stat error, leaving
+	// mt zero (sinks to bottom), which is fine.
 	lastPath := filepath.Join(config.FleetDir(), "last.toml")
 	if cfg, err := config.Load(lastPath); err == nil {
 		if !seen[cfg.Project.Name] {
 			seen[cfg.Project.Name] = true
-			projects = append(projects, existingProject{name: cfg.Project.Name, path: cfg.Project.Cwd})
+			var mt time.Time
+			if info, err := os.Stat(lastPath); err == nil { // follows symlink → target mtime
+				mt = info.ModTime()
+			}
+			projects = append(projects, existingProject{name: cfg.Project.Name, path: cfg.Project.Cwd, modTime: mt})
 		}
 	}
+
+	// Most-recent first; config-less (zero mtime) last; tie-break by name.
+	sort.SliceStable(projects, func(i, j int) bool {
+		ti, tj := projects[i].modTime, projects[j].modTime
+		if ti.IsZero() != tj.IsZero() {
+			return !ti.IsZero()
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return projects[i].name < projects[j].name
+	})
 
 	return projects
 }
@@ -205,6 +250,8 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 		switch p.focus {
 		case focusProjectList:
 			return p.updateProjectList(msg)
+		case focusSettings:
+			return p.updateSettings(msg)
 		case focusPath:
 			return p.updatePathInput(msg)
 		case focusRelayURL:
@@ -267,11 +314,47 @@ func (p projectPanel) updateProjectList(msg tea.KeyMsg) (projectPanel, tea.Cmd) 
 	return p, nil
 }
 
+// updateSettings drives the settings hub: a 3-row column (Path/Relay/Team) the
+// user navigates with j/k and dives into with enter. esc is handled upstream in
+// wizard_model (the non-text esc ladder).
+func (p projectPanel) updateSettings(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if p.settingsCursor > 0 {
+			p.settingsCursor--
+		}
+	case "down", "j":
+		if p.settingsCursor < 2 {
+			p.settingsCursor++
+		}
+	case "enter":
+		switch p.settingsCursor {
+		case 0: // Path
+			p.focus = focusPath
+			p.pathInput.Focus()
+			return p, textinput.Blink
+		case 1: // Relay
+			p.focus = focusRelayURL
+			p.relayInput.Focus()
+			return p, textinput.Blink
+		case 2: // Team
+			p.focus = focusPresets
+			return p, nil
+		}
+	}
+	return p, nil
+}
+
 func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		p.focus = focusProjectList
 		p.pathInput.Blur()
+		if p.ready { // editing from the hub
+			p.focus = focusSettings
+			p.settingsCursor = 0
+			return p, nil
+		}
+		p.focus = focusProjectList // new project, aborted
 		return p, nil
 	case "enter":
 		pathVal := strings.TrimSpace(p.pathInput.Value())
@@ -288,8 +371,14 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 		// Create directory if it doesn't exist
 		os.MkdirAll(expanded, 0755)
 
-		p.focus = focusRelayURL
 		p.pathInput.Blur()
+		if p.ready { // hub edit → straight back to the hub
+			p.focus = focusSettings
+			p.settingsCursor = 0
+			return p, nil
+		}
+		// New-project linear flow: path → relay.
+		p.focus = focusRelayURL
 		p.relayInput.Focus()
 		return p, textinput.Blink
 	}
@@ -303,9 +392,15 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		p.focus = focusPath
 		p.relayErr = ""
 		p.relayInput.Blur()
+		if p.ready { // editing from the hub
+			p.focus = focusSettings
+			p.settingsCursor = 1
+			return p, nil
+		}
+		// New-project linear flow: step back to path.
+		p.focus = focusPath
 		p.pathInput.Focus()
 		return p, textinput.Blink
 	case "enter":
@@ -319,9 +414,17 @@ func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 			}
 		}
 		p.relayErr = ""
-		p.focus = focusPresets
 		p.relayInput.Blur()
+		if p.ready { // hub edit → back to the Relay row
+			p.focus = focusSettings
+			p.settingsCursor = 1
+			return p, nil
+		}
+		// New-project linear flow: relay confirmed → project is ready; land in
+		// the hub on the Team row to nudge picking a team.
 		p.ready = true
+		p.focus = focusSettings
+		p.settingsCursor = 2
 		return p, nil
 	}
 
@@ -346,10 +449,6 @@ func validateRelayURL(raw string) error {
 
 func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
-		p.focus = focusRelayURL
-		p.relayInput.Focus()
-		return p, textinput.Blink
 	case "up", "k":
 		if p.presetCursor > 0 {
 			p.presetCursor--
@@ -367,7 +466,7 @@ func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	return p, nil
 }
 
-func (p projectPanel) View(active bool) string {
+func (p projectPanel) View(active bool, agentCount int) string {
 	var sb strings.Builder
 
 	borderColor := lipgloss.Color("238")
@@ -377,23 +476,14 @@ func (p projectPanel) View(active bool) string {
 
 	sb.WriteString(dimStyle.Render("PROJECT") + "\n")
 
-	if p.focus == focusProjectList {
-		// Project list
+	switch p.focus {
+	case focusProjectList:
 		for i, proj := range p.existingProjects {
 			cursor := "  "
 			style := dimStyle
 			if i == p.projectCursor {
 				cursor = selectedStyle.Render("▸ ")
 				style = selectedStyle
-			}
-			label := proj.name
-			if proj.path != "" {
-				home, _ := os.UserHomeDir()
-				short := proj.path
-				if home != "" && strings.HasPrefix(short, home) {
-					short = "~" + short[len(home):]
-				}
-				label += " " + dimStyle.Render(short)
 			}
 			sb.WriteString(cursor + style.Render(proj.name))
 			if proj.path != "" {
@@ -406,7 +496,6 @@ func (p projectPanel) View(active bool) string {
 			}
 			sb.WriteString("\n")
 		}
-		// "New project..." sentinel
 		idx := len(p.existingProjects)
 		cursor := "  "
 		style := dimStyle
@@ -415,45 +504,61 @@ func (p projectPanel) View(active bool) string {
 			style = selectedStyle
 		}
 		sb.WriteString(cursor + style.Render("+ New project...") + "\n")
-	} else if p.focus == focusPath {
-		// Path input mode
+
+	case focusPath:
 		sb.WriteString("  Path: " + p.pathInput.View() + "\n")
-		// Show auto-derived name preview
 		val := strings.TrimSpace(p.pathInput.Value())
 		if val != "" {
 			name := filepath.Base(expandHome(val))
 			sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(name) + dimStyle.Render(" (auto)") + "\n")
 		}
-	} else if p.focus == focusRelayURL {
-		// Relay URL input mode — path is confirmed
+
+	case focusRelayURL:
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
 		sb.WriteString("  Relay: " + p.relayInput.View() + "\n")
 		if p.relayErr != "" {
 			sb.WriteString("  " + errorStyle.Render("⚠ "+p.relayErr) + "\n")
 		}
-	} else {
-		// Confirmed — show name + path + relay
+
+	case focusSettings:
+		home, _ := os.UserHomeDir()
+		pathDisp := p.pathInput.Value()
+		if home != "" && strings.HasPrefix(pathDisp, home) {
+			pathDisp = "~" + pathDisp[len(home):]
+		}
+		rows := []struct{ label, val string }{
+			{"Path:  ", pathDisp},
+			{"Relay: ", p.RelayURL()},
+			{"Team:  ", fmt.Sprintf("%d agents", agentCount)},
+		}
+		for i, r := range rows {
+			cursor := "  "
+			vstyle := dimStyle
+			if i == p.settingsCursor {
+				cursor = selectedStyle.Render("▸ ")
+				vstyle = selectedStyle
+			}
+			sb.WriteString(cursor + dimStyle.Render(r.label) + vstyle.Render(r.val) + "\n")
+		}
+
+	case focusPresets:
 		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
-		sb.WriteString("  " + dimStyle.Render("Relay: ") + selectedStyle.Render(p.RelayURL()) + "\n")
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(dimStyle.Render("PRESET") + "\n")
-
-	if !p.ready {
-		sb.WriteString(dimStyle.Render("  Set project first...") + "\n")
-	} else {
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render("CHOOSE TEAM") + "\n")
 		for i, preset := range p.presets {
 			cursor := "  "
 			style := dimStyle
-			if p.focus == focusPresets && i == p.presetCursor {
+			if i == p.presetCursor {
 				cursor = selectedStyle.Render("▸ ")
 				style = selectedStyle
 			}
 			count := fmt.Sprintf("(%d)", len(preset.Agents))
 			sb.WriteString(cursor + style.Render(preset.Icon+" "+preset.Name) + " " + dimStyle.Render(count) + "\n")
 		}
+
+	default:
+		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 	}
 
 	panelStyle := lipgloss.NewStyle().
