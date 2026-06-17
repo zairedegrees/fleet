@@ -155,3 +155,41 @@ func TestGetGoalNotFound(t *testing.T) {
 		t.Error("expected not-found error")
 	}
 }
+
+func TestListGoalsWithProgress(t *testing.T) {
+	s := New(newTestStore(t))
+	gr := mustCall(t, s, "create_goal", map[string]any{"project": "p", "as": "lead", "title": "Ship auth"})
+	var g struct {
+		Goal Goal `json:"goal"`
+	}
+	decodePayload(t, gr, &g)
+	t1 := dispatchTaskID(t, s, g.Goal.ID)
+	dispatchTaskID(t, s, g.Goal.ID)
+	setTaskStatus(t, s, t1, "done")
+
+	res := mustCall(t, s, "list_goals", map[string]any{"project": "p"})
+	var got struct {
+		Count int `json:"count"`
+		Goals []struct {
+			Title string `json:"title"`
+			Total int    `json:"total"`
+			Done  int    `json:"done"`
+		} `json:"goals"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 1 || got.Goals[0].Title != "Ship auth" || got.Goals[0].Total != 2 || got.Goals[0].Done != 1 {
+		t.Errorf("bad list_goals: %+v", got)
+	}
+}
+
+func TestListGoalsEmpty(t *testing.T) {
+	s := New(newTestStore(t))
+	res := mustCall(t, s, "list_goals", map[string]any{"project": "p"})
+	var got struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 0 {
+		t.Errorf("expected 0 goals, got %d", got.Count)
+	}
+}

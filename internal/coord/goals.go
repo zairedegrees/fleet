@@ -84,3 +84,52 @@ func handleGetGoal(s *Server, args map[string]any) (toolResult, error) {
 		},
 	})
 }
+
+// listGoals returns the project's goals, most recent first, each with done and
+// total (non-cancelled, non-archived) task counts via a LEFT JOIN.
+func (s *Store) listGoals(project, status string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := `
+SELECT g.id, g.title, g.status, g.created_by, g.created_at,
+  COALESCE(SUM(CASE WHEN t.status IS NOT NULL AND t.status != 'cancelled' THEN 1 ELSE 0 END), 0) AS total,
+  COALESCE(SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END), 0) AS done
+FROM goals g
+LEFT JOIN tasks t ON t.goal_id = g.id AND t.archived_at IS NULL
+WHERE g.project = ?`
+	a := []any{project}
+	if status != "" {
+		q += " AND g.status = ?"
+		a = append(a, status)
+	}
+	q += " GROUP BY g.id, g.title, g.status, g.created_by, g.created_at ORDER BY g.created_at DESC LIMIT ?"
+	a = append(a, limit)
+
+	rows, err := s.reader().Query(q, a...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, title, st, createdBy, createdAt string
+		var total, done int
+		if err := rows.Scan(&id, &title, &st, &createdBy, &createdAt, &total, &done); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "title": title, "status": st, "created_by": createdBy,
+			"created_at": createdAt, "total": total, "done": done,
+		})
+	}
+	return out, rows.Err()
+}
+
+func handleListGoals(s *Server, args map[string]any) (toolResult, error) {
+	goals, err := s.store.listGoals(resolveProject(args), argString(args, "status"), argInt(args, "limit", 50))
+	if err != nil {
+		return toolResult{}, err
+	}
+	return resultText(map[string]any{"count": len(goals), "goals": goals})
+}

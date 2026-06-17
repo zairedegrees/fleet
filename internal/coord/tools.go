@@ -190,6 +190,13 @@ var toolDefs = []toolDef{
 			"project": projectProp,
 			"goal_id": strProp("The goal id."),
 		}, "goal_id")},
+
+	{"list_goals", "List goals in a project, most recent first, each with done/total task progress. Compact — no descriptions; use get_goal for one goal's full progress.",
+		schema(map[string]any{
+			"project": projectProp,
+			"status":  strProp("Optional: filter by status (e.g. 'open')."),
+			"limit":   numProp("Max goals to return (default 50)."),
+		})},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
