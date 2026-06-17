@@ -69,6 +69,12 @@ func (s *Server) AgentsWithPendingTasks() ([]WakeRequest, error) {
 	return s.store.agentsWithPendingTasks()
 }
 
+// RegisterNotifyChannelForTest seeds a wake channel. Exported for cross-package
+// tests (coordmgr); production registration goes through the MCP tool.
+func (s *Server) RegisterNotifyChannelForTest(project, agent, target string) error {
+	return s.store.registerNotifyChannel(project, agent, target)
+}
+
 func handleRegisterNotifyChannel(s *Server, args map[string]any) (toolResult, error) {
 	// Lowercase the name to match register_agent / deactivate_agent, so the
 	// waker's lookup (keyed on the agent's stored, lowercased name) hits.

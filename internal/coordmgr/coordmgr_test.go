@@ -25,7 +25,7 @@ func TestServeIsReachable(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	_ = ln.Close()
 
-	go func() { _ = Serve(strconv.Itoa(port)) }()
+	go func() { _ = Serve(strconv.Itoa(port), nil) }()
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
 	reachable := false
