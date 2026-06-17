@@ -102,3 +102,15 @@ type Task struct {
 	GoalID         *string `json:"goal_id,omitempty"`
 	ArchivedAt     *string `json:"archived_at,omitempty"`
 }
+
+// Conversation is a named agent-to-agent thread. Messages link to it via their
+// conversation_id; last_message_at tracks activity for ordering.
+type Conversation struct {
+	ID            string `json:"id"`
+	Project       string `json:"project"`
+	Subject       string `json:"subject"`
+	CreatedBy     string `json:"created_by"`
+	CreatedAt     string `json:"created_at"`
+	LastMessageAt string `json:"last_message_at"`
+	Status        string `json:"status"`
+}

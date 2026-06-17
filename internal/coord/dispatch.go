@@ -35,6 +35,9 @@ var handlers = map[string]handlerFunc{
 	"get_memory":          handleGetMemory,
 	"whoami":              handleWhoami,
 	"get_session_context": handleGetSessionContext,
+	"start_conversation":  handleStartConversation,
+	"get_conversation":    handleGetConversation,
+	"list_conversations":  handleListConversations,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.

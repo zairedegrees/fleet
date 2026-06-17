@@ -2,6 +2,7 @@ package coord
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 
 	"github.com/zairedegrees/fleet/internal/coord/normalize"
@@ -75,6 +76,20 @@ func (s *Store) sendMessage(project, from, to, msgType, subject, content, metada
 		Priority: priority, TTLSeconds: 14400,
 	}
 	err := s.write(func(tx *sql.Tx) error {
+		if conversationID != nil {
+			// Bump last_message_at and prove the conversation exists in one
+			// statement: 0 rows affected means an unknown id — reject (rolls
+			// back, so no orphan message).
+			res, err := tx.Exec(
+				"UPDATE conversations SET last_message_at = ? WHERE id = ? AND project = ?",
+				msg.CreatedAt, *conversationID, project)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("unknown conversation_id %q — start_conversation first", *conversationID)
+			}
+		}
 		if _, err := tx.Exec(
 			"INSERT INTO messages (id, from_agent, to_agent, reply_to, type, subject, content, metadata, created_at, conversation_id, project, priority, ttl_seconds) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			msg.ID, msg.From, msg.To, msg.ReplyTo, msg.Type, msg.Subject, msg.Content, msg.Metadata, msg.CreatedAt, msg.ConversationID, msg.Project, msg.Priority, msg.TTLSeconds); err != nil {

@@ -148,4 +148,56 @@ var toolDefs = []toolDef{
 
 	{"list_orgs", "List organizations. Used as the relay health probe.",
 		schema(map[string]any{})},
+
+	{"start_conversation", "Start a named conversation thread and get its id. Pass `to` and `content` to also post the opening message in one call. Reply later with send_message(conversation_id=...).",
+		schema(map[string]any{
+			"project":  projectProp,
+			"as":       asProp,
+			"subject":  strProp("Short thread subject."),
+			"to":       strProp("Optional: recipient of an opening message ('*' broadcasts)."),
+			"content":  strProp("Optional: opening message body (requires `to`)."),
+			"priority": strProp("Optional opening-message priority P0-P3 (default P2)."),
+		}, "subject")},
+
+	{"get_conversation", "Get a conversation thread: metadata + messages in chronological order. Returns the most recent `limit` messages; page older with `before` (a created_at cursor). Content is truncated unless full_content=true.",
+		schema(map[string]any{
+			"project":         projectProp,
+			"conversation_id": strProp("The conversation id."),
+			"limit":           numProp("Max messages to return (default 20)."),
+			"before":          strProp("Cursor: return messages created before this value (page older)."),
+			"full_content":    boolProp("Return full bodies instead of 300-char previews."),
+		}, "conversation_id")},
+
+	{"list_conversations", "List the conversations you're part of (started, or sent/received a message in), most recent first. Compact summaries only (subject, counts) — no bodies; use get_conversation for the thread.",
+		schema(map[string]any{
+			"project": projectProp,
+			"as":      asProp,
+			"status":  strProp("Optional: filter by status (e.g. 'open')."),
+			"limit":   numProp("Max conversations to return (default 20)."),
+		})},
+}
+
+// operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
+// name) but NOT advertised on tools/list. Agents never call them — fleet
+// registers agents and profiles server-side and drives orchestration — so
+// keeping them out of every agent's catalog trims ~780 tokens of context per
+// agent. Dropping register_agent also enforces the no-self-register design: an
+// agent can't call a tool it never sees.
+var operatorOnly = map[string]bool{
+	"register_agent":   true,
+	"register_profile": true,
+	"deactivate_agent": true,
+	"list_orgs":        true,
+}
+
+// advertisedTools is the tools/list catalog: every toolDef except operator-only
+// ones. tools/call still dispatches all handlers (see the handlers map).
+func advertisedTools() []toolDef {
+	out := make([]toolDef, 0, len(toolDefs))
+	for _, t := range toolDefs {
+		if !operatorOnly[t.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
 }

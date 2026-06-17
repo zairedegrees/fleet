@@ -48,7 +48,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case "tools/list":
-		s.writeRaw(w, req.ID, map[string]any{"tools": toolDefs})
+		s.writeRaw(w, req.ID, map[string]any{"tools": advertisedTools()})
 
 	case "ping":
 		s.writeRaw(w, req.ID, map[string]any{})
