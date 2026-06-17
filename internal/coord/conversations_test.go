@@ -190,3 +190,57 @@ func TestGetConversationTruncatesAndPages(t *testing.T) {
 		t.Errorf("expected truncated content (303 chars), got len %d", len(got.Messages[0].Content))
 	}
 }
+
+func TestListConversationsParticipationAndCounts(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "start_conversation", map[string]any{"project": "p", "as": "dev", "subject": "Auth", "to": "auditor", "content": "look"})
+	// a thread dev is NOT part of:
+	mustCall(t, s, "start_conversation", map[string]any{"project": "p", "as": "ops", "subject": "Infra", "to": "qa", "content": "hey"})
+
+	res := mustCall(t, s, "list_conversations", map[string]any{"project": "p", "as": "dev"})
+	var got struct {
+		Count         int `json:"count"`
+		Conversations []struct {
+			Subject      string `json:"subject"`
+			MessageCount int    `json:"message_count"`
+			UnreadCount  int    `json:"unread_count"`
+		} `json:"conversations"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 1 || got.Conversations[0].Subject != "Auth" {
+		t.Fatalf("dev should see only the Auth thread, got %+v", got)
+	}
+	if got.Conversations[0].MessageCount != 1 {
+		t.Errorf("expected message_count 1, got %d", got.Conversations[0].MessageCount)
+	}
+	if got.Conversations[0].UnreadCount != 0 {
+		t.Errorf("dev sent the only message, unread should be 0, got %d", got.Conversations[0].UnreadCount)
+	}
+}
+
+func TestListConversationsUnreadForRecipient(t *testing.T) {
+	s := New(newTestStore(t))
+	mustCall(t, s, "start_conversation", map[string]any{"project": "p", "as": "dev", "subject": "Auth", "to": "auditor", "content": "look"})
+	res := mustCall(t, s, "list_conversations", map[string]any{"project": "p", "as": "auditor"})
+	var got struct {
+		Conversations []struct {
+			UnreadCount int `json:"unread_count"`
+		} `json:"conversations"`
+	}
+	decodePayload(t, res, &got)
+	if len(got.Conversations) != 1 || got.Conversations[0].UnreadCount != 1 {
+		t.Errorf("auditor should have 1 unread, got %+v", got.Conversations)
+	}
+}
+
+func TestListConversationsEmpty(t *testing.T) {
+	s := New(newTestStore(t))
+	res := mustCall(t, s, "list_conversations", map[string]any{"project": "p", "as": "nobody"})
+	var got struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 0 {
+		t.Errorf("expected 0 conversations, got %d", got.Count)
+	}
+}

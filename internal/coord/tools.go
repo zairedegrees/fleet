@@ -167,6 +167,14 @@ var toolDefs = []toolDef{
 			"before":          strProp("Cursor: return messages created before this value (page older)."),
 			"full_content":    boolProp("Return full bodies instead of 300-char previews."),
 		}, "conversation_id")},
+
+	{"list_conversations", "List the conversations you're part of (started, or sent/received a message in), most recent first. Compact summaries only (subject, counts) — no bodies; use get_conversation for the thread.",
+		schema(map[string]any{
+			"project": projectProp,
+			"as":      asProp,
+			"status":  strProp("Optional: filter by status (e.g. 'open')."),
+			"limit":   numProp("Max conversations to return (default 20)."),
+		})},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by

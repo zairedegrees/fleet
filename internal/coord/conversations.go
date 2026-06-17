@@ -144,3 +144,63 @@ func handleGetConversation(s *Server, args map[string]any) (toolResult, error) {
 		"conversation": meta, "messages": msgs, "count": len(msgs), "has_more": hasMore,
 	})
 }
+
+// listConversations returns the conversations the agent participates in (it
+// created the thread, or sent/received a message in it, including broadcasts),
+// most recent first. Each carries message_count and the agent's unread_count
+// (delivered to the agent, no message_reads row).
+func (s *Store) listConversations(project, agent, status string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `
+SELECT c.id, c.subject, c.created_by, c.last_message_at, c.status,
+       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+       (SELECT COUNT(*) FROM messages m
+          JOIN deliveries d ON d.message_id = m.id
+          WHERE m.conversation_id = c.id AND d.to_agent = ?
+            AND NOT EXISTS (SELECT 1 FROM message_reads r WHERE r.message_id = m.id AND r.agent_name = ?)
+       ) AS unread_count
+FROM conversations c
+WHERE c.project = ?
+  AND (c.created_by = ?
+       OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+                    AND (m.from_agent = ? OR m.to_agent = ? OR m.to_agent = '*')))`
+	a := []any{agent, agent, project, agent, agent, agent}
+	if status != "" {
+		q += " AND c.status = ?"
+		a = append(a, status)
+	}
+	q += " ORDER BY c.last_message_at DESC LIMIT ?"
+	a = append(a, limit)
+
+	rows, err := s.reader().Query(q, a...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, subject, createdBy, lastAt, st string
+		var msgCount, unread int
+		if err := rows.Scan(&id, &subject, &createdBy, &lastAt, &st, &msgCount, &unread); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "subject": subject, "created_by": createdBy,
+			"last_message_at": lastAt, "status": st,
+			"message_count": msgCount, "unread_count": unread,
+		})
+	}
+	return out, rows.Err()
+}
+
+func handleListConversations(s *Server, args map[string]any) (toolResult, error) {
+	agent := resolveAgent(args)
+	convs, err := s.store.listConversations(
+		resolveProject(args), agent, argString(args, "status"), argInt(args, "limit", 20))
+	if err != nil {
+		return toolResult{}, err
+	}
+	return resultText(map[string]any{"agent": agent, "count": len(convs), "conversations": convs})
+}
