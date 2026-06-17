@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.9] — 2026-06-18
+
+### Added
+- **Wake-on-mission.** When a task is dispatched to an agent — by any agent, not
+  just the operator's `fleet dispatch` CLI — the recipient's pane is now woken
+  automatically if it is dormant. The built-in coordination core emits a
+  post-commit event on `dispatch_task` and runs a lightweight reconciliation
+  sweep; a new `register_notify_channel` tool (operator-only) records each
+  agent's tmux session at launch. Watching is entirely server-side (tmux + SQL),
+  so an idle agent with no work still costs zero tokens, and a busy agent is
+  never interrupted — it picks the task up in its running talk loop.
+
 ## [0.1.8] — 2026-06-17
 
 ### Changed
