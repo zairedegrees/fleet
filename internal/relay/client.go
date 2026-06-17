@@ -224,6 +224,16 @@ func (c *Client) RegisterAgentFull(r AgentRegistration) error {
 	return err
 }
 
+// RegisterNotifyChannel records a wake target for an agent (operator-only tool).
+func (c *Client) RegisterNotifyChannel(project, agent, target string) error {
+	_, err := c.call("register_notify_channel", map[string]interface{}{
+		"project": project,
+		"name":    agent,
+		"target":  target,
+	})
+	return err
+}
+
 // EnsureProfile creates or updates a profile on the relay.
 func (c *Client) EnsureProfile(name, role, project string) error {
 	_, err := c.call("register_profile", map[string]interface{}{

@@ -21,12 +21,17 @@ func testCfg(dir string) *config.FleetConfig {
 // fakeRegistrar satisfies relayRegistrar without a relay; err is returned by
 // every call.
 type fakeRegistrar struct {
-	err error
+	err            error
+	notifyChannels []string
 }
 
 func (f *fakeRegistrar) EnsureProfile(name, role, project string) error          { return f.err }
 func (f *fakeRegistrar) RegisterAgentFull(r relay.AgentRegistration) error       { return f.err }
 func (f *fakeRegistrar) PushVaultDoc(project, path string, content []byte) error { return f.err }
+func (f *fakeRegistrar) RegisterNotifyChannel(project, agent, target string) error {
+	f.notifyChannels = append(f.notifyChannels, agent+"="+target)
+	return f.err
+}
 
 // A mutant that ignores cfg.Project.RelayURL and registers against the default
 // relay must not survive: launch registration has to hit the config's URL.

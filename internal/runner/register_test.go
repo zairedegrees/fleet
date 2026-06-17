@@ -320,6 +320,31 @@ func TestRegisterFleetSkipsAgentsWithoutSession(t *testing.T) {
 	}
 }
 
+// registerFleet must register each agent's tmux wake channel so the waker
+// can reach dormant panes without polling.
+func TestRegisterFleetRegistersNotifyChannel(t *testing.T) {
+	stubExec(t)
+	srv, calls := captureRelay(t)
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
+		Agents:  []config.AgentConfig{{Name: "dev", Color: "green", Role: "Dev"}},
+	}
+
+	if err := registerFleet(cfg, relay.NewClient(srv.URL)); err != nil {
+		t.Fatalf("registerFleet failed: %v", err)
+	}
+
+	channels := callsFor(*calls, "register_notify_channel")
+	if len(channels) != 1 {
+		t.Fatalf("expected 1 register_notify_channel call, got %d", len(channels))
+	}
+	got := channels[0].Args
+	wantTarget := "tmux:" + SessionName("proj", "dev")
+	if got["name"] != "dev" || got["project"] != "proj" || got["target"] != wantTarget {
+		t.Errorf("register_notify_channel args wrong: %v (want target %q)", got, wantTarget)
+	}
+}
+
 // A failed registration must surface with the agent's name — and must not
 // stop the remaining agents from being registered.
 func TestRegisterFleetSurfacesFailureAndContinues(t *testing.T) {
