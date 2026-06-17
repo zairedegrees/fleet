@@ -1,6 +1,7 @@
 package coordmgr
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -74,5 +75,28 @@ func TestWakerCooldown(t *testing.T) {
 	w.tryWake(coord.WakeRequest{Project: "acme", Agent: "worker"})
 	if woke != 2 {
 		t.Fatalf("past cooldown must wake again, got %d", woke)
+	}
+}
+
+// TestWakerRunStopsAndSignalsWaitGroup pins the shutdown contract Serve relies
+// on: closing stop must end run(), and run() must call wg.Done so Serve can wait
+// for an in-flight sweep before closing the store.
+func TestWakerRunStopsAndSignalsWaitGroup(t *testing.T) {
+	srv := newWakerTestServer(t)
+	w := &waker{srv: srv, lastWoken: map[string]time.Time{}, now: time.Now,
+		wake: func(_, _, _ string) (bool, error) { return true, nil }}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go w.run(stop, &wg)
+
+	close(stop)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not return / WaitGroup not signalled after stop closed")
 	}
 }

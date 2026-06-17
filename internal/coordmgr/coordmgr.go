@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -62,11 +63,19 @@ func Serve(port string, wake WakeFunc) error {
 
 	srv := coord.New(store)
 
+	// Stop the waker and wait for any in-flight sweep query to finish BEFORE the
+	// store is closed. This defer is registered after store.Close so it runs
+	// first (LIFO), closing the read/store-access race window on shutdown.
 	stop := make(chan struct{})
-	defer close(stop)
+	var wakerWG sync.WaitGroup
+	defer func() {
+		close(stop)
+		wakerWG.Wait()
+	}()
 	if wake != nil {
 		w := &waker{srv: srv, wake: wake, lastWoken: map[string]time.Time{}, now: time.Now}
-		go w.run(stop)
+		wakerWG.Add(1)
+		go w.run(stop, &wakerWG)
 	}
 
 	serveErr := make(chan error, 1)

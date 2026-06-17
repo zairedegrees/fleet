@@ -69,8 +69,11 @@ func (s *Server) AgentsWithPendingTasks() ([]WakeRequest, error) {
 	return s.store.agentsWithPendingTasks()
 }
 
-// RegisterNotifyChannelForTest seeds a wake channel. Exported for cross-package
-// tests (coordmgr); production registration goes through the MCP tool.
+// RegisterNotifyChannelForTest seeds a wake channel for cross-package tests
+// (coordmgr's waker tests). It must live in a regular (non-_test.go) file: a
+// _test.go/export_test.go helper is only compiled for THIS package's own tests,
+// so it would be invisible to coordmgr's test binary, which links the ordinary
+// build of coord. Production registration goes through the MCP tool, not here.
 func (s *Server) RegisterNotifyChannelForTest(project, agent, target string) error {
 	return s.store.registerNotifyChannel(project, agent, target)
 }
