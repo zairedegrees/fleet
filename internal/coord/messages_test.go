@@ -118,7 +118,8 @@ func TestDispatchAutoNotifyVisibleInInbox(t *testing.T) {
 
 func TestBroadcastDeliversToAllExceptSender(t *testing.T) {
 	s := New(newTestStore(t))
-	for _, n := range []string{"a", "b", "c"} {
+	mustCall(t, s, "register_agent", map[string]any{"name": "a", "project": "p", "is_executive": true})
+	for _, n := range []string{"b", "c"} {
 		mustCall(t, s, "register_agent", map[string]any{"name": n, "project": "p"})
 	}
 	mustCall(t, s, "send_message", map[string]any{"as": "a", "to": "*", "project": "p", "content": "all hands"})
@@ -156,7 +157,7 @@ func TestSendAndMarkReadValidation(t *testing.T) {
 
 func TestBroadcastDeliversToInactiveRecipient(t *testing.T) {
 	s := New(newTestStore(t))
-	mustCall(t, s, "register_agent", map[string]any{"name": "a", "project": "p"})
+	mustCall(t, s, "register_agent", map[string]any{"name": "a", "project": "p", "is_executive": true})
 	mustCall(t, s, "register_agent", map[string]any{"name": "b", "project": "p"})
 	mustCall(t, s, "deactivate_agent", map[string]any{"name": "b", "project": "p"}) // b -> inactive
 

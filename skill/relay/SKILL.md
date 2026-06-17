@@ -52,7 +52,8 @@ they leave your inbox.
 
 ### `send <agent> <message>`
 `send_message(as, project, to: "<agent>", subject: "...", content: "...")`. Use
-`to: "*"` to broadcast. Priority `P0` (interrupt) … `P3` (info), default `P2`.
+`to: "*"` to broadcast (broadcast requires an executive agent). Priority `P0`
+(interrupt) … `P3` (info), default `P2`.
 
 ### `conversations` — multi-turn threads
 For a back-and-forth (e.g. a review discussion), keep it in one thread instead
