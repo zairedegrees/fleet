@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.10] — 2026-06-18
+
+### Added
+- **`fleet --status --watch`.** Live-refreshing status: clears and reprints the
+  per-agent view every `--interval` (default 2s) until ctrl+c, so you can watch
+  agents flip idle↔working in real time. Read-only (relay + tmux) — an idle
+  fleet still costs zero tokens; it just repeats the existing `--status` reads.
+  On a slow relay the previous frame stays until the new one is ready (no blank
+  flicker). One-shot `fleet --status` is unchanged.
+
 ## [0.1.9] — 2026-06-18
 
 ### Added
