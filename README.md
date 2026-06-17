@@ -25,14 +25,14 @@ fleet --status                 # readable status: who's idle vs working, and how
 
 ## Why
 
-Running a fleet of always-on agents is expensive. Agents that poll for work every 30 seconds burn tokens around the clock even when there is nothing to do: roughly **2.88M tokens per idle agent per day**, about **17M tokens/day for a team of six**.
+Running a fleet of always-on agents is expensive. A common but naive pattern — an agent that polls for work every 30 seconds — burns tokens around the clock even when there is nothing to do. A real "check inbox, nothing to do" turn is not cheap: measured across dozens of real idle turns, the median is **~59k tokens (~$0.06 at current Opus rates)** — mostly cached context re-read on every poll. At one poll every 30s that is roughly **$180/day per idle agent**, about **$1,000/day for a team of six** — spent doing nothing.
 
 fleet treats tokens as the scarce resource:
 
 - Agents boot **registered but idle**: the tmux session is live and Claude is ready, but no polling loop runs. **Idle cost: zero tokens.**
 - fleet **registers each agent server-side** at launch (full identity: role, `profile_slug`, reporting line). Agents never self-register in their pane, so they can't accidentally wipe their own `profile_slug` — task routing keeps working regardless of relay version. Identity travels with the wake instead.
 - fleet **wakes an agent on dispatch**. The talk loop starts only when there is a task, then dies on its own after a few empty checks.
-- Net effect: agents spend tokens while working, not while waiting. About **95% saved on idle token cost.**
+- Net effect: agents spend tokens **while working, not while waiting**. An idle fleet runs no polling loop at all, so against that always-polling baseline its idle cost is **effectively zero** — the whole idle bill avoided, not a slice of it (a transcript-based measurement puts it at **>99%**).
 
 ## Features
 
