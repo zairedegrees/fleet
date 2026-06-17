@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.8] — 2026-06-17
+
+### Changed
+- **Wizard daily-UX.** The interactive wizard now lists saved projects
+  most-recently-used first (by config mtime) and pre-selects the last-launched
+  one, turns the left panel into a navigable settings hub (Path / Relay / Team)
+  so every setting stays reachable in-flow, and uses a consistent `esc` ladder
+  that walks up one level and only quits from the project list. No new config,
+  no new knobs — recency derives from state already maintained on every launch.
+- **Wizard-first `/fleet` onboarding skill.** The bundled skill now leads with
+  the interactive wizard (which writes and validates the config and symlinks
+  `last.toml` itself) instead of hand-authoring TOML, with a quick start up top
+  and a compact headless-setup fallback for non-interactive use. Documentation
+  only.
+
 ## [0.1.7] — 2026-06-17
 
 ### Changed
