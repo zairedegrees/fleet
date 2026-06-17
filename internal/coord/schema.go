@@ -178,6 +178,17 @@ CREATE TABLE IF NOT EXISTS agent_notify_channels (
   target TEXT NOT NULL,
   PRIMARY KEY (agent_name, project, target)
 );
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_message_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open'
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_project_activity ON conversations(project, last_message_at);
 `
 
 // schemaTables is the set of tables migrate must create. The store's migration
@@ -185,5 +196,5 @@ CREATE TABLE IF NOT EXISTS agent_notify_channels (
 var schemaTables = []string{
 	"agents", "profiles", "tasks", "messages", "deliveries",
 	"message_reads", "memories", "orgs", "projects", "teams",
-	"team_members", "agent_notify_channels",
+	"team_members", "agent_notify_channels", "conversations",
 }
