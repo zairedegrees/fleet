@@ -184,6 +184,12 @@ var toolDefs = []toolDef{
 			"title":       strProp("Short goal title."),
 			"description": strProp("Optional: what the goal is about."),
 		}, "title")},
+
+	{"get_goal", "Get a goal and its derived progress (task counts: total, done, in_progress, blocked). Use list_tasks(goal_id=...) for the tasks themselves.",
+		schema(map[string]any{
+			"project": projectProp,
+			"goal_id": strProp("The goal id."),
+		}, "goal_id")},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by

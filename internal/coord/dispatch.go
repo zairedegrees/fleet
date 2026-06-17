@@ -39,6 +39,7 @@ var handlers = map[string]handlerFunc{
 	"get_conversation":    handleGetConversation,
 	"list_conversations":  handleListConversations,
 	"create_goal":         handleCreateGoal,
+	"get_goal":            handleGetGoal,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.
