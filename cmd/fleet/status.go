@@ -140,9 +140,13 @@ func runStatusWatch() error {
 // from tick (injected, so this is deterministically testable).
 func watchStatus(out io.Writer, interval time.Duration, render func() string, tick <-chan time.Time, stop <-chan os.Signal) {
 	draw := func() {
+		// Render BEFORE clearing so a slow relay fetch (up to statusRelayTimeout)
+		// doesn't leave the screen blank — the previous frame stays until the new
+		// one is ready, then we swap atomically.
+		body := render()
 		fmt.Fprint(out, "\x1b[2J\x1b[H") // clear screen + cursor home
 		fmt.Fprintf(out, "  refreshing every %s · ctrl+c to quit\n\n", interval)
-		fmt.Fprint(out, render())
+		fmt.Fprint(out, body)
 	}
 	draw()
 	for {
