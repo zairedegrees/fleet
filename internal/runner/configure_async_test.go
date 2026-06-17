@@ -33,6 +33,29 @@ func (f *fakeRegistrar) RegisterNotifyChannel(project, agent, target string) err
 	return f.err
 }
 
+// Through the registrar seam (not HTTP): registerFleet records each live
+// agent's wake channel with the exact tmux session as the target.
+func TestRegisterFleetRecordsNotifyChannelThroughSeam(t *testing.T) {
+	stubExec(t) // every has-session succeeds
+	f := &fakeRegistrar{}
+	cfg := testCfg(t.TempDir())
+
+	if err := registerFleet(cfg, f); err != nil {
+		t.Fatalf("registerFleet failed: %v", err)
+	}
+
+	want := "dev=tmux:" + SessionName("proj", "dev")
+	found := false
+	for _, c := range f.notifyChannels {
+		if c == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected channel %q, got %v", want, f.notifyChannels)
+	}
+}
+
 // A mutant that ignores cfg.Project.RelayURL and registers against the default
 // relay must not survive: launch registration has to hit the config's URL.
 func TestConfigureAgentsAsyncRegistersAgainstConfigRelayURL(t *testing.T) {

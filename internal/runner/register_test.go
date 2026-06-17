@@ -164,6 +164,8 @@ func TestRegisterFleetProfileBeforeAgentOrder(t *testing.T) {
 		t.Fatalf("registerFleet failed: %v", err)
 	}
 
+	// Only profile/agent ordering matters here; register_notify_channel is
+	// intentionally filtered out (its placement is covered by its own tests).
 	var seq []string
 	for _, c := range *calls {
 		if c.Tool == "register_profile" || c.Tool == "register_agent" {
@@ -342,6 +344,28 @@ func TestRegisterFleetRegistersNotifyChannel(t *testing.T) {
 	wantTarget := "tmux:" + SessionName("proj", "dev")
 	if got["name"] != "dev" || got["project"] != "proj" || got["target"] != wantTarget {
 		t.Errorf("register_notify_channel args wrong: %v (want target %q)", got, wantTarget)
+	}
+}
+
+// A failed notify-channel registration must surface named — and must not stop
+// the remaining agents from getting their channel registered.
+func TestRegisterFleetNamesNotifyChannelFailureAndContinues(t *testing.T) {
+	stubExec(t)
+	srv, calls := captureRelay(t, "register_notify_channel")
+	cfg := &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "proj", Cwd: t.TempDir()},
+		Agents: []config.AgentConfig{
+			{Name: "dev", Color: "green", Role: "Dev"},
+			{Name: "ops", Color: "blue", Role: "Ops"},
+		},
+	}
+
+	err := registerFleet(cfg, relay.NewClient(srv.URL))
+	if err == nil || !strings.Contains(err.Error(), "notify channel dev") {
+		t.Errorf("expected the failed notify channel named in the error, got: %v", err)
+	}
+	if got := len(callsFor(*calls, "register_notify_channel")); got != 2 {
+		t.Errorf("one channel failure must not stop the others, got %d register_notify_channel calls", got)
 	}
 }
 

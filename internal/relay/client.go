@@ -224,7 +224,8 @@ func (c *Client) RegisterAgentFull(r AgentRegistration) error {
 	return err
 }
 
-// RegisterNotifyChannel records a wake target for an agent (operator-only tool).
+// RegisterNotifyChannel records a wake channel for an agent; fleet calls it at
+// launch so the coord waker can reach a dormant pane.
 func (c *Client) RegisterNotifyChannel(project, agent, target string) error {
 	_, err := c.call("register_notify_channel", map[string]interface{}{
 		"project": project,
