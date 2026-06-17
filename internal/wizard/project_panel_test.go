@@ -1,8 +1,11 @@
 package wizard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zairedegrees/fleet/internal/config"
@@ -128,5 +131,79 @@ func TestProjectPanelRelayURLEscGoesBackToPath(t *testing.T) {
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEsc})
 	if p.focus != focusPath {
 		t.Errorf("esc must return to the path input, got focus %v", p.focus)
+	}
+}
+
+// Projects are listed most-recently-used first, by config file mtime; a
+// config-less project (no mtime) sinks to the bottom.
+func TestDiscoverProjectsSortedByRecency(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".fleet", "configs")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, age time.Duration) {
+		p := filepath.Join(cfgDir, name+".toml")
+		if err := config.Save(p, &config.FleetConfig{
+			Project: config.ProjectConfig{Name: name, Cwd: "/tmp/" + name},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		mt := time.Now().Add(-age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("old", 3*time.Hour)
+	write("newest", 1*time.Minute)
+	write("middle", 1*time.Hour)
+
+	var names []string
+	for _, p := range discoverProjects() {
+		names = append(names, p.name)
+	}
+	if got := strings.Join(names, ","); got != "newest,middle,old" {
+		t.Errorf("recency order = %q, want newest,middle,old", got)
+	}
+}
+
+// The cursor lands on the last-launched project (last.toml target), even when
+// it is not the most recent by mtime.
+func TestNewProjectPanelPreselectsLastProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, ".fleet", "configs")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, age time.Duration) string {
+		p := filepath.Join(cfgDir, name+".toml")
+		if err := config.Save(p, &config.FleetConfig{
+			Project: config.ProjectConfig{Name: name, Cwd: "/tmp/" + name},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		mt := time.Now().Add(-age)
+		if err := os.Chtimes(p, mt, mt); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write("alpha", 1*time.Minute) // newest by mtime
+	betaPath := write("beta", 2*time.Hour)
+	write("gamma", 3*time.Hour)
+
+	// last.toml -> beta proves preselection follows last.toml, not index 0.
+	if err := os.Symlink(betaPath, filepath.Join(home, ".fleet", "last.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newProjectPanel()
+	if p.projectCursor >= len(p.existingProjects) {
+		t.Fatalf("cursor %d out of range (%d projects)", p.projectCursor, len(p.existingProjects))
+	}
+	if got := p.existingProjects[p.projectCursor].name; got != "beta" {
+		t.Errorf("preselected %q, want beta (last.toml target)", got)
 	}
 }

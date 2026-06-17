@@ -5,7 +5,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -65,8 +67,9 @@ type projectPanel struct {
 }
 
 type existingProject struct {
-	name string
-	path string // cwd from saved config, empty if unknown
+	name    string
+	path    string    // cwd from saved config, empty if unknown
+	modTime time.Time // mtime of configs/<name>.toml; zero when config-less
 }
 
 func newProjectPanel() projectPanel {
@@ -84,16 +87,31 @@ func newProjectPanel() projectPanel {
 
 	existing := discoverProjects()
 
+	// Pre-pose the cursor on the last-launched project (last.toml target). Falls
+	// back to 0 (the most recent by mtime) when there is no last.toml.
+	cursor := 0
+	if cfg, err := config.LoadLast(); err == nil {
+		for i, ep := range existing {
+			if ep.name == cfg.Project.Name {
+				cursor = i
+				break
+			}
+		}
+	}
+
 	return projectPanel{
 		pathInput:        pi,
 		relayInput:       ri,
 		presets:          AllPresets(),
 		existingProjects: existing,
+		projectCursor:    cursor,
 		focus:            focusProjectList,
 	}
 }
 
-// discoverProjects finds existing projects from configs and projects file.
+// discoverProjects finds existing projects from configs and projects file,
+// most-recently-used first (by config file mtime). Config-less projects (from
+// the projects file) have no mtime and sink to the bottom.
 func discoverProjects() []existingProject {
 	seen := make(map[string]bool)
 	var projects []existingProject
@@ -107,13 +125,16 @@ func discoverProjects() []existingProject {
 				name := strings.TrimSuffix(e.Name(), ".toml")
 				if !seen[name] {
 					seen[name] = true
-					// Try to load the config to get the cwd
+					var mt time.Time
+					if info, err := e.Info(); err == nil {
+						mt = info.ModTime()
+					}
 					path := ""
 					cfgPath := filepath.Join(configDir, e.Name())
 					if cfg, err := config.Load(cfgPath); err == nil {
 						path = cfg.Project.Cwd
 					}
-					projects = append(projects, existingProject{name: name, path: path})
+					projects = append(projects, existingProject{name: name, path: path, modTime: mt})
 				}
 			}
 		}
@@ -137,9 +158,25 @@ func discoverProjects() []existingProject {
 	if cfg, err := config.Load(lastPath); err == nil {
 		if !seen[cfg.Project.Name] {
 			seen[cfg.Project.Name] = true
-			projects = append(projects, existingProject{name: cfg.Project.Name, path: cfg.Project.Cwd})
+			var mt time.Time
+			if info, err := os.Stat(lastPath); err == nil { // follows symlink → target mtime
+				mt = info.ModTime()
+			}
+			projects = append(projects, existingProject{name: cfg.Project.Name, path: cfg.Project.Cwd, modTime: mt})
 		}
 	}
+
+	// Most-recent first; config-less (zero mtime) last; tie-break by name.
+	sort.SliceStable(projects, func(i, j int) bool {
+		ti, tj := projects[i].modTime, projects[j].modTime
+		if ti.IsZero() != tj.IsZero() {
+			return !ti.IsZero()
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return projects[i].name < projects[j].name
+	})
 
 	return projects
 }
