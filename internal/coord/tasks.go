@@ -21,7 +21,7 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 // dispatchTask inserts a pending task routed to profileSlug, then fans out an
 // inbox notification to every active agent running that profile except the
 // dispatcher. Task insert + notifications are one serialized transaction.
-func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority string) (*Task, error) {
+func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority, goalID string) (*Task, error) {
 	if priority == "" {
 		priority = "P2"
 	}
@@ -29,12 +29,23 @@ func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, descript
 	task := &Task{
 		ID: newID(), ProfileSlug: profileSlug, DispatchedBy: dispatchedBy, Title: title,
 		Description: description, Priority: priority, Status: "pending", Project: project, DispatchedAt: now,
+		GoalID: optionalString(goalID),
 	}
 
 	err := s.write(func(tx *sql.Tx) error {
+		if goalID != "" {
+			var one int
+			err := tx.QueryRow("SELECT 1 FROM goals WHERE id = ? AND project = ?", goalID, project).Scan(&one)
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("unknown goal_id %q — create_goal first", goalID)
+			}
+			if err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(
-			"INSERT INTO tasks (id, profile_slug, dispatched_by, title, description, priority, status, project, dispatched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			task.ID, task.ProfileSlug, task.DispatchedBy, task.Title, task.Description, task.Priority, task.Status, task.Project, task.DispatchedAt); err != nil {
+			"INSERT INTO tasks (id, profile_slug, dispatched_by, title, description, priority, status, project, dispatched_at, goal_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			task.ID, task.ProfileSlug, task.DispatchedBy, task.Title, task.Description, task.Priority, task.Status, task.Project, task.DispatchedAt, task.GoalID); err != nil {
 			return err
 		}
 
@@ -377,6 +388,7 @@ func handleDispatchTask(s *Server, args map[string]any) (toolResult, error) {
 		title,
 		argString(args, "description"),
 		argStringDefault(args, "priority", "P2"),
+		argString(args, "goal_id"),
 	)
 	if err != nil {
 		return toolResult{}, err

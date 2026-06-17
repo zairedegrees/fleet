@@ -78,6 +78,7 @@ var toolDefs = []toolDef{
 			"title":       strProp("Short task title."),
 			"description": strProp("What to do and acceptance criteria."),
 			"priority":    strProp("P0 (interrupt) .. P3 (info). Default P2."),
+			"goal_id":     strProp("Optional: attach this task to a goal (must exist; see create_goal)."),
 		}, "profile", "title")},
 
 	{"list_tasks", "List tasks in a project, ordered by priority then recency. status='active' excludes done/cancelled. count reflects the returned page.",
