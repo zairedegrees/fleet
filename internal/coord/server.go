@@ -44,7 +44,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		s.writeRaw(w, req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "fleet-coord", "version": "0.1.5"},
+			"serverInfo":      map[string]any{"name": "fleet-coord", "version": "0.1.6"},
 		})
 
 	case "tools/list":

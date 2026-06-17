@@ -20,7 +20,7 @@ import (
 
 // fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
 // the release tag.
-const fleetVersion = "0.1.5"
+const fleetVersion = "0.1.6"
 
 const defaultRelayURL = config.DefaultRelayURL
 
