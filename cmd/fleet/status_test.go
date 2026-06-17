@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -559,5 +562,64 @@ func TestRenderStatusUnknownTaskCount(t *testing.T) {
 	out := renderStatus(projects, 1, "", renderRef)
 	if !strings.Contains(out, "dev  [registered · on-demand · tasks: ?]") {
 		t.Errorf("expected registered with explicit unknown task count, got: %q", out)
+	}
+}
+
+// watchStatus re-renders on each tick (plus an immediate first render) and stops
+// on the stop signal. The tick/stop/render are injected so this is deterministic.
+func TestWatchStatusRerendersOnTickThenStops(t *testing.T) {
+	var buf bytes.Buffer
+	stop := make(chan os.Signal, 1)
+	tick := make(chan time.Time)
+	rendered := make(chan struct{}, 10)
+	calls := 0
+	render := func() string { calls++; rendered <- struct{}{}; return "BODY" }
+
+	done := make(chan struct{})
+	go func() { watchStatus(&buf, 5*time.Second, render, tick, stop); close(done) }()
+
+	<-rendered // immediate first render
+	tick <- time.Now()
+	<-rendered
+	tick <- time.Now()
+	<-rendered
+	stop <- syscall.SIGTERM
+	<-done
+
+	if calls != 3 {
+		t.Fatalf("want 3 renders (immediate + 2 ticks), got %d", calls)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "every 5s") {
+		t.Fatalf("header must show the interval; got %q", got)
+	}
+	if !strings.Contains(got, "ctrl+c to quit") {
+		t.Fatalf("header must show the quit hint; got %q", got)
+	}
+	if !strings.Contains(got, "\x1b[2J") {
+		t.Fatalf("each draw must clear the screen; got %q", got)
+	}
+	if !strings.Contains(got, "BODY") {
+		t.Fatalf("body must be rendered; got %q", got)
+	}
+}
+
+// watchStatus returns promptly when the stop signal fires, even with no ticks.
+func TestWatchStatusExitsOnStop(t *testing.T) {
+	var buf bytes.Buffer
+	stop := make(chan os.Signal, 1)
+	stop <- syscall.SIGTERM
+	done := make(chan struct{})
+	go func() {
+		watchStatus(&buf, time.Second, func() string { return "X" }, make(chan time.Time), stop)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchStatus did not exit on stop")
+	}
+	if !strings.Contains(buf.String(), "X") {
+		t.Fatalf("the immediate first render must run even when stop is already pending; got %q", buf.String())
 	}
 }

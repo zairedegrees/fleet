@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
@@ -70,10 +74,14 @@ var loadSavedConfigs = func() []*config.FleetConfig {
 	return cfgs
 }
 
-func runStatus() error {
+// statusOnce gathers the current fleet status and returns it as a ready-to-print
+// string. Extracted from runStatus so both the one-shot and --watch paths share
+// exactly one rendering path. The error is only the unrecoverable tmux failure;
+// a down relay degrades inside buildStatus (a warning line), it does not error.
+func statusOnce() (string, error) {
 	sessions, err := runner.ListFleetSessions()
 	if err != nil {
-		return fmt.Errorf("cannot list tmux sessions: %w", err)
+		return "", fmt.Errorf("cannot list tmux sessions: %w", err)
 	}
 
 	defaultURL := defaultRelayURL
@@ -83,14 +91,73 @@ func runStatus() error {
 
 	projects, warning := buildStatus(sessions, loadSavedConfigs(), defaultURL, flagRelayURL)
 	if len(sessions) == 0 && len(projects) == 0 {
+		s := ""
 		if warning != "" {
-			fmt.Printf("  ⚠ %s\n\n", warning)
+			s += fmt.Sprintf("  ⚠ %s\n\n", warning)
 		}
-		fmt.Println("  No fleet sessions running.")
-		return nil
+		return s + "  No fleet sessions running.\n", nil
 	}
-	fmt.Print(renderStatus(projects, len(sessions), warning, time.Now()))
+	return renderStatus(projects, len(sessions), warning, time.Now()), nil
+}
+
+func runStatus() error {
+	if flagWatch {
+		return runStatusWatch()
+	}
+	out, err := statusOnce()
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
 	return nil
+}
+
+// runStatusWatch refreshes the status on a ticker until ctrl+c. All work is
+// read-only (relay + tmux), so an idle fleet still costs zero LLM tokens.
+func runStatusWatch() error {
+	interval := flagInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	render := func() string {
+		out, err := statusOnce()
+		if err != nil {
+			return "  ⚠ " + err.Error() + "\n"
+		}
+		return out
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	watchStatus(os.Stdout, interval, render, ticker.C, sig)
+	return nil
+}
+
+// watchStatus draws render() immediately, then clears and redraws on every tick,
+// until a stop signal. interval is shown in the header; the real cadence comes
+// from tick (injected, so this is deterministically testable).
+func watchStatus(out io.Writer, interval time.Duration, render func() string, tick <-chan time.Time, stop <-chan os.Signal) {
+	draw := func() {
+		// Render BEFORE clearing so a slow relay fetch (up to statusRelayTimeout)
+		// doesn't leave the screen blank — the previous frame stays until the new
+		// one is ready, then we swap atomically.
+		body := render()
+		fmt.Fprint(out, "\x1b[2J\x1b[H") // clear screen + cursor home
+		fmt.Fprintf(out, "  refreshing every %s · ctrl+c to quit\n\n", interval)
+		fmt.Fprint(out, body)
+	}
+	draw()
+	for {
+		select {
+		case <-stop:
+			fmt.Fprintln(out) // leave the cursor on a clean line
+			return
+		case <-tick:
+			draw()
+		}
+	}
 }
 
 // buildStatus turns the tmux session list + saved configs into the per-project
