@@ -36,6 +36,35 @@ func (s *Server) NotifyChannelTarget(project, agent string) (string, bool, error
 	return s.store.notifyChannelTarget(project, agent)
 }
 
+// agentsWithPendingTasks lists recipients of unread (queued) task-type messages
+// that have a registered tmux notify channel — the sweep's wake candidates.
+func (s *Store) agentsWithPendingTasks() ([]WakeRequest, error) {
+	rows, err := s.reader().Query(`
+		SELECT DISTINCT d.project, d.to_agent
+		FROM deliveries d
+		JOIN messages m ON d.message_id = m.id
+		JOIN agent_notify_channels c ON c.agent_name = d.to_agent AND c.project = d.project
+		WHERE d.state = 'queued' AND m.type = 'task' AND m.expired_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WakeRequest
+	for rows.Next() {
+		var w WakeRequest
+		if err := rows.Scan(&w.Project, &w.Agent); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// AgentsWithPendingTasks exposes the sweep candidates to the waker (coordmgr).
+func (s *Server) AgentsWithPendingTasks() ([]WakeRequest, error) {
+	return s.store.agentsWithPendingTasks()
+}
+
 func handleRegisterNotifyChannel(s *Server, args map[string]any) (toolResult, error) {
 	// Lowercase the name to match register_agent / deactivate_agent, so the
 	// waker's lookup (keyed on the agent's stored, lowercased name) hits.

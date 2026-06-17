@@ -7,6 +7,11 @@ func newTestServer(t *testing.T) *Server {
 	return New(newTestStore(t))
 }
 
+func seedActiveAgent(t *testing.T, s *Server, project, name, profile string) {
+	t.Helper()
+	mustCall(t, s, "register_agent", map[string]any{"name": name, "project": project, "profile_slug": profile})
+}
+
 func TestRegisterNotifyChannelRoundTrip(t *testing.T) {
 	s := newTestServer(t)
 	res, err := handleRegisterNotifyChannel(s, map[string]any{
@@ -77,5 +82,46 @@ func TestRegisterNotifyChannelIsOperatorOnly(t *testing.T) {
 		if td.Name == "register_notify_channel" {
 			t.Error("register_notify_channel must NOT be advertised")
 		}
+	}
+}
+
+// agentsWithPendingTasks returns recipients of unread (queued) task-type
+// messages that have a registered notify channel — excludes read, non-task,
+// and channel-less recipients.
+func TestAgentsWithPendingTasks(t *testing.T) {
+	s := newTestServer(t)
+	// Seed two active agents on profile "dev" (mirror the existing seeding helper).
+	seedActiveAgent(t, s, "acme", "worker", "dev")
+	seedActiveAgent(t, s, "acme", "lead", "dev")
+	_ = s.store.registerNotifyChannel("acme", "worker", "tmux:fleet-acme-worker")
+
+	// lead dispatches a task on profile dev → a queued type='task' delivery for worker.
+	if _, _, err := s.store.dispatchTask("acme", "dev", "lead", "ship it", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	got, err := s.AgentsWithPendingTasks()
+	if err != nil {
+		t.Fatalf("query err: %v", err)
+	}
+	if len(got) != 1 || got[0].Agent != "worker" || got[0].Project != "acme" {
+		t.Fatalf("want [acme/worker], got %+v", got)
+	}
+}
+
+func TestAgentsWithPendingTasksExcludesChannelless(t *testing.T) {
+	s := newTestServer(t)
+	seedActiveAgent(t, s, "acme", "worker", "dev")
+	seedActiveAgent(t, s, "acme", "lead", "dev")
+	// No notify channel for worker.
+	if _, _, err := s.store.dispatchTask("acme", "dev", "lead", "ship it", "", "P2", ""); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	got, err := s.AgentsWithPendingTasks()
+	if err != nil {
+		t.Fatalf("query err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("channel-less recipient must be excluded, got %+v", got)
 	}
 }
