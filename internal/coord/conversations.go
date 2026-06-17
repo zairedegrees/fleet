@@ -1,6 +1,9 @@
 package coord
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // createConversation inserts a new conversation. created_at and last_message_at
 // start equal; status starts "open".
@@ -22,16 +25,30 @@ func (s *Store) createConversation(project, subject, createdBy string) (*Convers
 	return c, nil
 }
 
-// handleStartConversation mints a conversation. subject is required. Posting an
-// opening message (to+content) is added in a later step.
+// handleStartConversation mints a conversation; if both `to` and `content` are
+// supplied it also posts the opening message in the same call (one round-trip).
 func handleStartConversation(s *Server, args map[string]any) (toolResult, error) {
 	subject := argString(args, "subject")
 	if subject == "" {
 		return resultError("subject is required"), nil
 	}
-	c, err := s.store.createConversation(resolveProject(args), subject, resolveAgent(args))
+	project := resolveProject(args)
+	from := resolveAgent(args)
+	c, err := s.store.createConversation(project, subject, from)
 	if err != nil {
 		return toolResult{}, err
 	}
-	return resultText(map[string]any{"conversation": c, "message": nil})
+	var opening *Message
+	to := strings.ToLower(argString(args, "to"))
+	content := argString(args, "content")
+	if to != "" && content != "" {
+		opening, err = s.store.sendMessage(
+			project, from, to, "notification", subject, content, "{}",
+			mapPriority(argString(args, "priority")), nil, &c.ID)
+		if err != nil {
+			return toolResult{}, err
+		}
+		c.LastMessageAt = opening.CreatedAt
+	}
+	return resultText(map[string]any{"conversation": c, "message": opening})
 }

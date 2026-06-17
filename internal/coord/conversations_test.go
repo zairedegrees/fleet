@@ -79,3 +79,46 @@ func TestSendMessageNoConversationUnchanged(t *testing.T) {
 		t.Errorf("plain message (no conversation_id) must still work: %s", res.Content[0].Text)
 	}
 }
+
+func TestStartConversationPostsOpeningMessage(t *testing.T) {
+	s := New(newTestStore(t))
+	res := mustCall(t, s, "start_conversation", map[string]any{
+		"project": "p", "as": "dev", "subject": "Review", "to": "auditor", "content": "please review",
+	})
+	var got struct {
+		Conversation Conversation `json:"conversation"`
+		Message      *Message     `json:"message"`
+	}
+	decodePayload(t, res, &got)
+	if got.Message == nil || got.Message.Content != "please review" {
+		t.Fatalf("opening message not posted: %+v", got.Message)
+	}
+	if got.Message.ConversationID == nil || *got.Message.ConversationID != got.Conversation.ID {
+		t.Errorf("opening message not linked to conversation: %+v", got.Message)
+	}
+	if got.Conversation.LastMessageAt != got.Message.CreatedAt {
+		t.Errorf("conversation last_message_at should track the opening message")
+	}
+	inbox := mustCall(t, s, "get_inbox", map[string]any{"project": "p", "as": "auditor"})
+	var ib struct {
+		Count int `json:"count"`
+	}
+	decodePayload(t, inbox, &ib)
+	if ib.Count != 1 {
+		t.Errorf("auditor inbox should have the opening message, got count %d", ib.Count)
+	}
+}
+
+func TestStartConversationNoMessageWithoutBoth(t *testing.T) {
+	s := New(newTestStore(t))
+	res := mustCall(t, s, "start_conversation", map[string]any{
+		"project": "p", "as": "dev", "subject": "S", "to": "auditor", // no content
+	})
+	var got struct {
+		Message *Message `json:"message"`
+	}
+	decodePayload(t, res, &got)
+	if got.Message != nil {
+		t.Errorf("no message should post without content, got %+v", got.Message)
+	}
+}
