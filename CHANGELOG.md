@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.6] — 2026-06-17
+
+### Added
+- **Goals.** High-level objectives that group tasks — three new coordination-core
+  tools: `create_goal` (open a named goal), `get_goal` (metadata + derived
+  progress: total / done / in_progress / blocked), and `list_goals` (compact,
+  each with done/total). A new `goals` table is auto-migrated. The `/relay` skill
+  teaches the workflow.
+
+### Changed
+- **`dispatch_task` can attach a task to a goal.** A new optional `goal_id`
+  routes the task under a goal; an unknown id is rejected (start the goal first).
+  Without it, behavior is unchanged. Goal progress is derived from the goal's
+  non-archived tasks (cancelled excluded), never stored.
+- **`list_tasks` gains a `goal_id` filter** — fetch a goal's tasks via the
+  existing tool instead of duplicating them in `get_goal`.
+
 ## [0.1.5] — 2026-06-17
 
 ### Added
