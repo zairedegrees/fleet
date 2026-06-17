@@ -158,6 +158,15 @@ var toolDefs = []toolDef{
 			"content":  strProp("Optional: opening message body (requires `to`)."),
 			"priority": strProp("Optional opening-message priority P0-P3 (default P2)."),
 		}, "subject")},
+
+	{"get_conversation", "Get a conversation thread: metadata + messages in chronological order. Returns the most recent `limit` messages; page older with `before` (a created_at cursor). Content is truncated unless full_content=true.",
+		schema(map[string]any{
+			"project":         projectProp,
+			"conversation_id": strProp("The conversation id."),
+			"limit":           numProp("Max messages to return (default 20)."),
+			"before":          strProp("Cursor: return messages created before this value (page older)."),
+			"full_content":    boolProp("Return full bodies instead of 300-char previews."),
+		}, "conversation_id")},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by

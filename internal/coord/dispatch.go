@@ -36,6 +36,7 @@ var handlers = map[string]handlerFunc{
 	"whoami":              handleWhoami,
 	"get_session_context": handleGetSessionContext,
 	"start_conversation":  handleStartConversation,
+	"get_conversation":    handleGetConversation,
 }
 
 // dispatch routes a decoded tools/call to its handler and normalizes the result.

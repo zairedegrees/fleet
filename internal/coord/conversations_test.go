@@ -1,6 +1,9 @@
 package coord
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStartConversationMintsRow(t *testing.T) {
 	s := New(newTestStore(t))
@@ -120,5 +123,70 @@ func TestStartConversationNoMessageWithoutBoth(t *testing.T) {
 	decodePayload(t, res, &got)
 	if got.Message != nil {
 		t.Errorf("no message should post without content, got %+v", got.Message)
+	}
+}
+
+func TestGetConversationReturnsThread(t *testing.T) {
+	s := New(newTestStore(t))
+	st := mustCall(t, s, "start_conversation", map[string]any{"project": "p", "as": "dev", "subject": "T", "to": "auditor", "content": "first"})
+	var sc struct {
+		Conversation Conversation `json:"conversation"`
+	}
+	decodePayload(t, st, &sc)
+	cid := sc.Conversation.ID
+	mustCall(t, s, "send_message", map[string]any{"project": "p", "as": "auditor", "to": "dev", "content": "second", "conversation_id": cid})
+
+	res := mustCall(t, s, "get_conversation", map[string]any{"project": "p", "conversation_id": cid})
+	var got struct {
+		Conversation Conversation `json:"conversation"`
+		Messages     []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+		Count   int  `json:"count"`
+		HasMore bool `json:"has_more"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 2 || got.Messages[0].Content != "first" || got.Messages[1].Content != "second" {
+		t.Errorf("expected chronological [first, second], got %+v", got.Messages)
+	}
+	if got.HasMore {
+		t.Error("has_more should be false for a 2-message thread at default limit")
+	}
+}
+
+func TestGetConversationNotFound(t *testing.T) {
+	s := New(newTestStore(t))
+	res := callTool(t, s, "get_conversation", map[string]any{"project": "p", "conversation_id": "nope"})
+	if !res.IsError {
+		t.Error("expected not-found error")
+	}
+}
+
+func TestGetConversationTruncatesAndPages(t *testing.T) {
+	s := New(newTestStore(t))
+	st := mustCall(t, s, "start_conversation", map[string]any{"project": "p", "as": "dev", "subject": "T"})
+	var sc struct {
+		Conversation Conversation `json:"conversation"`
+	}
+	decodePayload(t, st, &sc)
+	cid := sc.Conversation.ID
+	long := strings.Repeat("x", 400)
+	for i := 0; i < 3; i++ {
+		mustCall(t, s, "send_message", map[string]any{"project": "p", "as": "dev", "to": "auditor", "content": long, "conversation_id": cid})
+	}
+	res := mustCall(t, s, "get_conversation", map[string]any{"project": "p", "conversation_id": cid, "limit": 2})
+	var got struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+		Count   int  `json:"count"`
+		HasMore bool `json:"has_more"`
+	}
+	decodePayload(t, res, &got)
+	if got.Count != 2 || !got.HasMore {
+		t.Errorf("expected 2 messages + has_more, got count=%d hasMore=%v", got.Count, got.HasMore)
+	}
+	if len(got.Messages[0].Content) != 303 { // 300 + "..."
+		t.Errorf("expected truncated content (303 chars), got len %d", len(got.Messages[0].Content))
 	}
 }
