@@ -148,6 +148,16 @@ var toolDefs = []toolDef{
 
 	{"list_orgs", "List organizations. Used as the relay health probe.",
 		schema(map[string]any{})},
+
+	{"start_conversation", "Start a named conversation thread and get its id. Pass `to` and `content` to also post the opening message in one call. Reply later with send_message(conversation_id=...).",
+		schema(map[string]any{
+			"project":  projectProp,
+			"as":       asProp,
+			"subject":  strProp("Short thread subject."),
+			"to":       strProp("Optional: recipient of an opening message ('*' broadcasts)."),
+			"content":  strProp("Optional: opening message body (requires `to`)."),
+			"priority": strProp("Optional opening-message priority P0-P3 (default P2)."),
+		}, "subject")},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
