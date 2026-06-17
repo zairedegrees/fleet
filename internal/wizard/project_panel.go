@@ -531,7 +531,9 @@ func (p projectPanel) View(active bool) string {
 			sb.WriteString("  " + errorStyle.Render("⚠ "+p.relayErr) + "\n")
 		}
 	} else {
-		// Confirmed — show name + path + relay
+		// Confirmed / settings hub — show name + path + relay.
+		// TODO(Task 3): when focus==focusSettings, render settingsCursor as a ▸
+		// cursor on the Path/Relay/Team rows so the hub looks navigable.
 		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
 		sb.WriteString("  " + dimStyle.Render("Relay: ") + selectedStyle.Render(p.RelayURL()) + "\n")

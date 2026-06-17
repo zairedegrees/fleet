@@ -361,8 +361,10 @@ func (m wizardModel) View() string {
 		help = "type path  tab=autocomplete  enter=confirm  esc=back  ctrl+c=quit"
 	} else if m.activePanel == panelLeft && m.project.focus == focusRelayURL {
 		help = "type relay URL  enter=confirm  esc=back  ctrl+c=quit"
+	} else if m.activePanel == panelLeft && m.project.focus == focusPresets {
+		help = "j/k=move  enter=select team  esc=settings  tab=agents panel  q=quit"
 	} else if m.activePanel == panelLeft {
-		help = "j/k=move  enter=select preset  esc=relay URL  tab=agents panel  q=quit"
+		help = "j/k=move  enter=open  esc=back  tab=agents panel  q=quit"
 	} else {
 		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  P=autonomy  enter=launch  s=save+launch  tab=presets  q=quit"
 	}
