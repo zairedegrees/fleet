@@ -20,6 +20,7 @@ type relayRegistrar interface {
 	EnsureProfile(name, role, project string) error
 	RegisterAgentFull(r relay.AgentRegistration) error
 	PushVaultDoc(project, path string, content []byte) error
+	RegisterNotifyChannel(project, agent, target string) error
 }
 
 // registerFleet does the relay HTTP work that used to live as curl strings in
@@ -47,6 +48,9 @@ func registerFleet(cfg *config.FleetConfig, rc relayRegistrar) error {
 			ProfileSlug: agent.Name, ReportsTo: agent.ReportsTo, IsExecutive: agent.IsExecutive,
 		}); err != nil {
 			errs = append(errs, fmt.Errorf("register %s: %w", agent.Name, err))
+		}
+		if err := rc.RegisterNotifyChannel(project, agent.Name, "tmux:"+SessionName(project, agent.Name)); err != nil {
+			errs = append(errs, fmt.Errorf("notify channel %s: %w", agent.Name, err))
 		}
 
 		docs, err := config.ResolveVaultDocs(vaultDir, agent)

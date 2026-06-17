@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -47,7 +48,10 @@ func Reachable(url string) bool { return probe(url) == nil }
 // until the process is signalled. On SIGTERM/SIGINT it drains in-flight requests
 // (coord.Shutdown) and closes the store so the WAL is finalized — this is the
 // body of `fleet coord serve`, the detached child Stop() signals.
-func Serve(port string) error {
+//
+// wake is an optional WakeFunc injected by cmd/fleet; pass nil to disable the
+// waker (coordmgr must not import runner to avoid an import cycle).
+func Serve(port string, wake WakeFunc) error {
 	if err := os.MkdirAll(config.FleetDir(), 0o755); err != nil {
 		return err
 	}
@@ -58,6 +62,22 @@ func Serve(port string) error {
 	defer func() { _ = store.Close() }()
 
 	srv := coord.New(store)
+
+	// Stop the waker and wait for any in-flight sweep query to finish BEFORE the
+	// store is closed. This defer is registered after store.Close so it runs
+	// first (LIFO), closing the read/store-access race window on shutdown.
+	stop := make(chan struct{})
+	var wakerWG sync.WaitGroup
+	defer func() {
+		close(stop)
+		wakerWG.Wait()
+	}()
+	if wake != nil {
+		w := &waker{srv: srv, wake: wake, lastWoken: map[string]time.Time{}, now: time.Now}
+		wakerWG.Add(1)
+		go w.run(stop, &wakerWG)
+	}
+
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(":" + port) }()
 

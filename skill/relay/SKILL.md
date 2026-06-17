@@ -92,6 +92,10 @@ the whole thread only when you need the broader context (token discipline).
 ### `talk` — autonomous loop
 Proactively coordinate until things go quiet:
 
+> **Auto-wake:** a dispatched task wakes a dormant recipient's pane automatically
+> (fleet's built-in coord watches for it). You don't need to poll — act on tasks
+> when woken, and the loop sleeps again after 3 empty checks.
+
 1. `get_inbox(as, project, unread_only: true)`.
 2. For each message: act on it (answer questions, pick up tasks, update memory),
    reply with `send_message`, then `mark_read`.

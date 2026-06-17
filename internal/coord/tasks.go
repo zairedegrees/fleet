@@ -21,7 +21,8 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 // dispatchTask inserts a pending task routed to profileSlug, then fans out an
 // inbox notification to every active agent running that profile except the
 // dispatcher. Task insert + notifications are one serialized transaction.
-func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority, goalID string) (*Task, error) {
+// It returns the task and the list of agent names that were notified.
+func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, description, priority, goalID string) (*Task, []string, error) {
 	if priority == "" {
 		priority = "P2"
 	}
@@ -32,6 +33,7 @@ func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, descript
 		GoalID: optionalString(goalID),
 	}
 
+	var notified []string
 	err := s.write(func(tx *sql.Tx) error {
 		if goalID != "" {
 			var one int
@@ -79,13 +81,14 @@ func (s *Store) dispatchTask(project, profileSlug, dispatchedBy, title, descript
 			if err := insertMessageTx(tx, project, dispatchedBy, n, "task", subject, content, fmt.Sprintf(`{"task_id":"%s"}`, task.ID), "P2"); err != nil {
 				return err
 			}
+			notified = append(notified, n)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return task, nil
+	return task, notified, nil
 }
 
 // insertMessageTx inserts an inbox message and queues its delivery so it shows
@@ -385,8 +388,9 @@ func handleDispatchTask(s *Server, args map[string]any) (toolResult, error) {
 	if title == "" {
 		return resultError("title is required"), nil
 	}
-	task, err := s.store.dispatchTask(
-		resolveProject(args),
+	project := resolveProject(args)
+	task, notified, err := s.store.dispatchTask(
+		project,
 		profile,
 		resolveAgent(args),
 		title,
@@ -396,6 +400,9 @@ func handleDispatchTask(s *Server, args map[string]any) (toolResult, error) {
 	)
 	if err != nil {
 		return toolResult{}, err
+	}
+	for _, n := range notified {
+		s.emitDispatched(project, n)
 	}
 	return resultText(map[string]any{"task": task})
 }

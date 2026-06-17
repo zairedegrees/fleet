@@ -11,12 +11,20 @@ import (
 	"net/http"
 )
 
+// WakeRequest names an agent that just received a dispatched task — emitted on
+// the Dispatched channel for the waker (coordmgr) to act on.
+type WakeRequest struct {
+	Project string
+	Agent   string
+}
+
 // Server serves the coordination API over HTTP. It owns the SQLite store and a
 // single /mcp route; all tools are dispatched through that one endpoint.
 type Server struct {
-	store   *Store
-	mux     *http.ServeMux
-	httpSrv *http.Server
+	store      *Store
+	mux        *http.ServeMux
+	httpSrv    *http.Server
+	dispatched chan WakeRequest
 }
 
 // New builds a Server backed by store. The store must already be open. The
@@ -24,10 +32,22 @@ type Server struct {
 // a nil server racing against a concurrent Serve — the detached `coord serve`
 // child is exactly that Serve-in-goroutine / signal-calls-Shutdown pattern.
 func New(store *Store) *Server {
-	s := &Server{store: store, mux: http.NewServeMux()}
+	s := &Server{store: store, mux: http.NewServeMux(), dispatched: make(chan WakeRequest, 64)}
 	s.mux.HandleFunc("/mcp", s.handleMCP)
 	s.httpSrv = &http.Server{Handler: s.mux}
 	return s
+}
+
+// Dispatched is the stream of agents that just got a dispatched task. Drained
+// by the waker; emission is non-blocking, so a slow/absent consumer only loses
+// events that the reconciliation sweep will recover.
+func (s *Server) Dispatched() <-chan WakeRequest { return s.dispatched }
+
+func (s *Server) emitDispatched(project, agent string) {
+	select {
+	case s.dispatched <- WakeRequest{Project: project, Agent: agent}:
+	default:
+	}
 }
 
 // Handler exposes the HTTP handler for in-process testing without binding a

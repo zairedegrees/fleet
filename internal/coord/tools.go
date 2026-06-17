@@ -198,6 +198,13 @@ var toolDefs = []toolDef{
 			"status":  strProp("Optional: filter by status (e.g. 'open')."),
 			"limit":   numProp("Max goals to return (default 50)."),
 		})},
+
+	{"register_notify_channel", "Register a wake channel for an agent (operator-only). fleet calls this at launch so a dispatched task can wake a dormant agent's pane.",
+		schema(map[string]any{
+			"project": projectProp,
+			"name":    strProp("Agent name the channel belongs to."),
+			"target":  strProp("Wake target. Must start with 'tmux:' (e.g. 'tmux:<session>'); other schemes are rejected."),
+		}, "name", "target")},
 }
 
 // operatorOnly tools are handled on tools/call (the fleet CLI invokes them by
@@ -207,10 +214,11 @@ var toolDefs = []toolDef{
 // agent. Dropping register_agent also enforces the no-self-register design: an
 // agent can't call a tool it never sees.
 var operatorOnly = map[string]bool{
-	"register_agent":   true,
-	"register_profile": true,
-	"deactivate_agent": true,
-	"list_orgs":        true,
+	"register_agent":          true,
+	"register_profile":        true,
+	"deactivate_agent":        true,
+	"list_orgs":               true,
+	"register_notify_channel": true,
 }
 
 // advertisedTools is the tools/list catalog: every toolDef except operator-only

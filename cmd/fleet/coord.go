@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zairedegrees/fleet/internal/coordmgr"
+	"github.com/zairedegrees/fleet/internal/runner"
 )
 
 // newCoordCmd is the hidden internal command tree. `fleet coord serve` is what
@@ -20,7 +21,9 @@ func newCoordCmd() *cobra.Command {
 			if port == "" {
 				port = "8090"
 			}
-			return coordmgr.Serve(port)
+			return coordmgr.Serve(port, func(project, agent, session string) (bool, error) {
+				return runner.WakeSessionIfDormant(session, agent, project)
+			})
 		},
 	})
 	return cmd

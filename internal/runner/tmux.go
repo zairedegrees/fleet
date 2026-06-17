@@ -223,6 +223,53 @@ func SubmitCommand(project, agent, cmd string) error {
 	return execCommand("tmux", buildEnterArgs(session)...).Run()
 }
 
+// WakeSessionIfDormant wakes the agent in `session` ONLY if its pane is at the
+// idle prompt (❯). A busy pane is left alone — the agent will see the task in
+// its running talk loop. A missing session (ghost) is a no-op, not an error:
+// the capture-pane failure IS the session check (no separate HasSession probe,
+// unlike WakeAgent). Returns whether it actually woke the agent. The identity
+// preamble matches WakeAgent so an on-demand agent woken for the first time
+// knows who it is.
+//
+// NOTE: argument order is (session, agent, project) — session FIRST, project
+// LAST — because the caller holds the exact session string from the registry
+// (robust to coord lowercasing agent names) and must not recompute it. This
+// deliberately breaks the (project, agent, …) convention used by the rest of
+// this file; callers wiring a (project, agent, session) closure to this must
+// re-map the order.
+func WakeSessionIfDormant(session, agent, project string) (bool, error) {
+	out, err := execCommand("tmux", "capture-pane", "-t", session, "-p").Output()
+	if err != nil {
+		return false, nil // session gone / not yet up → skip
+	}
+	if !strings.Contains(string(out), "❯") {
+		return false, nil // busy → skip
+	}
+	if err := sendKeysToSession(session, identityPreamble(agent, project)); err != nil {
+		return false, err
+	}
+	if err := submitCommandToSession(session, "/relay talk"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// sendKeysToSession types text + Enter into a session (mirrors SendKeys, but by
+// session string — the waker has the exact session from the registry).
+func sendKeysToSession(session, text string) error {
+	return execCommand("tmux", buildSendKeysArgs(session, text)...).Run()
+}
+
+// submitCommandToSession types a command, lets the skill autocomplete settle,
+// then sends Enter separately (mirrors SubmitCommand).
+func submitCommandToSession(session, cmd string) error {
+	if err := execCommand("tmux", buildTypeArgs(session, cmd)...).Run(); err != nil {
+		return err
+	}
+	time.Sleep(submitSettle)
+	return execCommand("tmux", buildEnterArgs(session)...).Run()
+}
+
 // waitGone polls gone() up to attempts times (interval apart), returning true as
 // soon as it reports the session is gone — replaces a blind fixed sleep.
 func waitGone(gone func() bool, attempts int, interval time.Duration) bool {
