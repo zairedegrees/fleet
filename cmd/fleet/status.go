@@ -70,10 +70,14 @@ var loadSavedConfigs = func() []*config.FleetConfig {
 	return cfgs
 }
 
-func runStatus() error {
+// statusOnce gathers the current fleet status and returns it as a ready-to-print
+// string. Extracted from runStatus so both the one-shot and --watch paths share
+// exactly one rendering path. The error is only the unrecoverable tmux failure;
+// a down relay degrades inside buildStatus (a warning line), it does not error.
+func statusOnce() (string, error) {
 	sessions, err := runner.ListFleetSessions()
 	if err != nil {
-		return fmt.Errorf("cannot list tmux sessions: %w", err)
+		return "", fmt.Errorf("cannot list tmux sessions: %w", err)
 	}
 
 	defaultURL := defaultRelayURL
@@ -83,13 +87,21 @@ func runStatus() error {
 
 	projects, warning := buildStatus(sessions, loadSavedConfigs(), defaultURL, flagRelayURL)
 	if len(sessions) == 0 && len(projects) == 0 {
+		s := ""
 		if warning != "" {
-			fmt.Printf("  ⚠ %s\n\n", warning)
+			s += fmt.Sprintf("  ⚠ %s\n\n", warning)
 		}
-		fmt.Println("  No fleet sessions running.")
-		return nil
+		return s + "  No fleet sessions running.\n", nil
 	}
-	fmt.Print(renderStatus(projects, len(sessions), warning, time.Now()))
+	return renderStatus(projects, len(sessions), warning, time.Now()), nil
+}
+
+func runStatus() error {
+	out, err := statusOnce()
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
 	return nil
 }
 
