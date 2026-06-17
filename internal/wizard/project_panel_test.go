@@ -56,8 +56,8 @@ func TestProjectPanelPathThenRelayURLFlow(t *testing.T) {
 
 	p.relayInput.SetValue("http://custom:9999/mcp")
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
-	if p.focus != focusPresets || !p.ready {
-		t.Fatalf("relay enter must confirm and move to presets, got focus=%v ready=%v", p.focus, p.ready)
+	if p.focus != focusSettings || !p.ready {
+		t.Fatalf("relay enter must confirm and move to settings, got focus=%v ready=%v", p.focus, p.ready)
 	}
 	if got := p.RelayURL(); got != "http://custom:9999/mcp" {
 		t.Errorf("RelayURL() = %q, want the entered URL", got)
@@ -115,8 +115,8 @@ func TestProjectPanelRelayURLValidAfterInvalidProceeds(t *testing.T) {
 
 	p.relayInput.SetValue("http://localhost:9999/mcp")
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
-	if p.focus != focusPresets || !p.ready {
-		t.Fatalf("corrected URL must confirm and move to presets, got focus=%v ready=%v", p.focus, p.ready)
+	if p.focus != focusSettings || !p.ready {
+		t.Fatalf("corrected URL must confirm and move to settings, got focus=%v ready=%v", p.focus, p.ready)
 	}
 	if strings.Contains(p.View(true), "must start with") {
 		t.Error("a successful submit must clear the validation error")
@@ -171,6 +171,75 @@ func TestDiscoverProjectsSortedByRecency(t *testing.T) {
 	}
 	if got := strings.Join(names, ","); got != "newest,middle,old,orphan" {
 		t.Errorf("recency order = %q, want newest,middle,old,orphan", got)
+	}
+}
+
+// In the settings hub, j/k move the cursor (clamped) and enter dives into the
+// focused field's editor.
+func TestProjectPanelSettingsNavigation(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+	p.settingsCursor = 0
+
+	j := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	p, _ = p.updateSettings(j)
+	if p.settingsCursor != 1 {
+		t.Fatalf("j must move to Relay (1), got %d", p.settingsCursor)
+	}
+	p, _ = p.updateSettings(j)
+	p, _ = p.updateSettings(j) // clamp at 2
+	if p.settingsCursor != 2 {
+		t.Fatalf("cursor must clamp at Team (2), got %d", p.settingsCursor)
+	}
+	p, _ = p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusPresets {
+		t.Fatalf("enter on Team must open the preset chooser, got focus %v", p.focus)
+	}
+}
+
+func TestProjectPanelSettingsEntersEditors(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+
+	p.settingsCursor = 0
+	pp, _ := p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if pp.focus != focusPath {
+		t.Fatalf("enter on Path must open the path editor, got %v", pp.focus)
+	}
+
+	p.settingsCursor = 1
+	pp, _ = p.updateSettings(tea.KeyMsg{Type: tea.KeyEnter})
+	if pp.focus != focusRelayURL {
+		t.Fatalf("enter on Relay must open the relay editor, got %v", pp.focus)
+	}
+}
+
+// Editing a field from the hub (ready) returns to the hub — not the new-project
+// linear chain.
+func TestProjectPanelHubEditReturnsToSettings(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+
+	p.focus = focusPath
+	p.pathInput.SetValue(t.TempDir())
+	p, _ = p.updatePathInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusSettings {
+		t.Fatalf("hub path-edit enter must return to settings, got %v", p.focus)
+	}
+
+	p.focus = focusRelayURL
+	p.relayInput.SetValue("http://x:1/mcp")
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEnter})
+	if p.focus != focusSettings {
+		t.Fatalf("hub relay-edit enter must return to settings, got %v", p.focus)
+	}
+
+	p.focus = focusRelayURL
+	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEsc})
+	if p.focus != focusSettings {
+		t.Fatalf("hub relay-edit esc must return to settings, got %v", p.focus)
 	}
 }
 

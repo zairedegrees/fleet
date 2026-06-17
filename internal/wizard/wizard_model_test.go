@@ -105,9 +105,8 @@ func TestWizardLoadedProjectPrefillsRelayURL(t *testing.T) {
 	}
 }
 
-// Reopening an existing project must leave a way to edit its saved relay URL:
-// from the presets focus, esc steps back into the prefilled relay URL field
-// instead of quitting the wizard.
+// Reopening a project must leave a discoverable way to edit its saved relay URL:
+// tab to the settings hub, move to the Relay row, open it, edit, confirm.
 func TestWizardLoadedProjectCanEditRelayURL(t *testing.T) {
 	m := newWizardModel(nil)
 	updated, _ := m.Update(ProjectLoadedMsg{Config: &config.FleetConfig{
@@ -115,20 +114,20 @@ func TestWizardLoadedProjectCanEditRelayURL(t *testing.T) {
 	}})
 	wm := updated.(wizardModel)
 
-	// Loaded projects land on the agents panel; tab back to the left panel.
+	// Loaded projects land on the agents panel; tab back to the settings hub.
 	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyTab})
 	wm = updated.(wizardModel)
-	if wm.activePanel != panelLeft || wm.project.focus != focusPresets {
-		t.Fatalf("expected presets focus on the left panel, got panel=%v focus=%v", wm.activePanel, wm.project.focus)
+	if wm.activePanel != panelLeft || wm.project.focus != focusSettings {
+		t.Fatalf("tab must land on the settings hub, got panel=%v focus=%v", wm.activePanel, wm.project.focus)
 	}
 
-	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	// Move to the Relay row and open it.
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}) // Path -> Relay
 	wm = updated.(wizardModel)
-	if wm.quitting {
-		t.Fatal("esc on the presets step must step back, not quit the wizard")
-	}
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	wm = updated.(wizardModel)
 	if wm.project.focus != focusRelayURL {
-		t.Fatalf("esc from presets must focus the relay URL field, got %v", wm.project.focus)
+		t.Fatalf("enter on the Relay row must open the relay field, got %v", wm.project.focus)
 	}
 	if got := wm.project.relayInput.Value(); got != "http://saved.example:7000/mcp" {
 		t.Fatalf("relay field must keep the saved URL, got %q", got)
@@ -137,8 +136,8 @@ func TestWizardLoadedProjectCanEditRelayURL(t *testing.T) {
 	wm.project.relayInput.SetValue("http://edited.example:7100/mcp")
 	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	wm = updated.(wizardModel)
-	if wm.project.focus != focusPresets {
-		t.Fatalf("confirming the edit must return to presets, got %v", wm.project.focus)
+	if wm.project.focus != focusSettings {
+		t.Fatalf("confirming the edit must return to the settings hub, got %v", wm.project.focus)
 	}
 	if got := wm.project.RelayURL(); got != "http://edited.example:7100/mcp" {
 		t.Errorf("edited relay URL must be kept, got %q", got)
@@ -360,5 +359,54 @@ func TestWizardSanitizesRelayAgentNames(t *testing.T) {
 	}
 	if !strings.HasPrefix(got.Name, "ghost") {
 		t.Errorf("expected sanitized name preserving printable text, got %q", got.Name)
+	}
+}
+
+// Loading a project lands on the settings hub (left) while showing agents (right).
+func TestWizardLoadedProjectLandsOnSettings(t *testing.T) {
+	m := newWizardModel(nil)
+	updated, _ := m.Update(ProjectLoadedMsg{Config: &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "p", Cwd: "/tmp", RelayURL: "http://saved:7000/mcp"},
+		Agents:  []config.AgentConfig{{Name: "dev", Color: "green", Role: "Lead"}},
+	}})
+	wm := updated.(wizardModel)
+	if wm.project.focus != focusSettings {
+		t.Fatalf("loaded project must land on the settings hub, got %v", wm.project.focus)
+	}
+	if wm.activePanel != panelRight {
+		t.Fatalf("loaded project must show the agents panel, got %v", wm.activePanel)
+	}
+	if !wm.project.ready {
+		t.Fatal("loaded project must be ready")
+	}
+}
+
+// Esc walks up one level and only quits from the project list — never a surprise quit.
+func TestWizardEscLadder(t *testing.T) {
+	m := newWizardModel(nil)
+	updated, _ := m.Update(ProjectLoadedMsg{Config: &config.FleetConfig{
+		Project: config.ProjectConfig{Name: "p", Cwd: "/tmp"},
+	}})
+	wm := updated.(wizardModel)
+
+	// Agents panel: esc -> settings hub (left), not quit.
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	wm = updated.(wizardModel)
+	if wm.quitting || wm.activePanel != panelLeft || wm.project.focus != focusSettings {
+		t.Fatalf("esc on agents must go to settings, got quit=%v panel=%v focus=%v", wm.quitting, wm.activePanel, wm.project.focus)
+	}
+
+	// Settings hub: esc -> project list.
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	wm = updated.(wizardModel)
+	if wm.quitting || wm.project.focus != focusProjectList {
+		t.Fatalf("esc on settings must go to the project list, got quit=%v focus=%v", wm.quitting, wm.project.focus)
+	}
+
+	// Project list: esc -> quit.
+	updated, _ = wm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	wm = updated.(wizardModel)
+	if !wm.quitting {
+		t.Fatal("esc on the project list must quit")
 	}
 }

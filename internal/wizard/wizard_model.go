@@ -71,7 +71,8 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.project.relayInput.SetValue(cfg.Project.RelayURL)
 		}
 		m.project.ready = true
-		m.project.focus = focusPresets
+		m.project.focus = focusSettings
+		m.project.settingsCursor = 0
 		// Load agents from saved config
 		var items []agentItem
 		for _, a := range cfg.Agents {
@@ -118,7 +119,8 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.project.pathInput.SetValue(display)
 			m.project.ready = true
-			m.project.focus = focusPresets
+			m.project.focus = focusSettings
+			m.project.settingsCursor = 0
 		} else {
 			m.project.focus = focusPath
 			m.project.pathInput.Focus()
@@ -177,6 +179,8 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.agents.SetAgents(PresetAgentItems(preset))
 		}
 		m.activePanel = panelRight
+		m.project.focus = focusSettings
+		m.project.settingsCursor = 2
 		return m, nil
 
 	case EditAgentMsg:
@@ -239,11 +243,20 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.quitting = true
 				return m, tea.Quit
 			case "esc":
-				// On the presets focus, esc steps back to the relay URL
-				// field (delegated below) — the only way to edit a loaded
-				// project's saved relay_url. Everywhere else it quits.
-				if m.activePanel == panelLeft && m.project.focus == focusPresets {
-					break
+				// esc walks up one level; it only quits from the project list.
+				if m.activePanel == panelRight {
+					m.activePanel = panelLeft
+					m.project.focus = focusSettings
+					return m, nil
+				}
+				switch m.project.focus {
+				case focusPresets:
+					m.project.focus = focusSettings
+					m.project.settingsCursor = 2
+					return m, nil
+				case focusSettings:
+					m.project.focus = focusProjectList
+					return m, nil
 				}
 				m.quitting = true
 				return m, tea.Quit

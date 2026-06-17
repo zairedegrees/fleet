@@ -42,6 +42,7 @@ type ProjectSelectedMsg struct {
 const (
 	focusProjectList leftFocus = 3
 	focusRelayURL    leftFocus = 4
+	focusSettings    leftFocus = 5
 )
 
 type projectPanel struct {
@@ -60,6 +61,9 @@ type projectPanel struct {
 	// Presets
 	presets      []Preset
 	presetCursor int
+
+	// Settings hub cursor: 0=Path, 1=Relay, 2=Team
+	settingsCursor int
 
 	focus leftFocus
 	ready bool
@@ -246,6 +250,8 @@ func (p projectPanel) Update(msg tea.Msg) (projectPanel, tea.Cmd) {
 		switch p.focus {
 		case focusProjectList:
 			return p.updateProjectList(msg)
+		case focusSettings:
+			return p.updateSettings(msg)
 		case focusPath:
 			return p.updatePathInput(msg)
 		case focusRelayURL:
@@ -308,11 +314,47 @@ func (p projectPanel) updateProjectList(msg tea.KeyMsg) (projectPanel, tea.Cmd) 
 	return p, nil
 }
 
+// updateSettings drives the settings hub: a 3-row column (Path/Relay/Team) the
+// user navigates with j/k and dives into with enter. esc is handled upstream in
+// wizard_model (the non-text esc ladder).
+func (p projectPanel) updateSettings(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if p.settingsCursor > 0 {
+			p.settingsCursor--
+		}
+	case "down", "j":
+		if p.settingsCursor < 2 {
+			p.settingsCursor++
+		}
+	case "enter":
+		switch p.settingsCursor {
+		case 0: // Path
+			p.focus = focusPath
+			p.pathInput.Focus()
+			return p, textinput.Blink
+		case 1: // Relay
+			p.focus = focusRelayURL
+			p.relayInput.Focus()
+			return p, textinput.Blink
+		case 2: // Team
+			p.focus = focusPresets
+			return p, nil
+		}
+	}
+	return p, nil
+}
+
 func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		p.focus = focusProjectList
 		p.pathInput.Blur()
+		if p.ready { // editing from the hub
+			p.focus = focusSettings
+			p.settingsCursor = 0
+			return p, nil
+		}
+		p.focus = focusProjectList // new project, aborted
 		return p, nil
 	case "enter":
 		pathVal := strings.TrimSpace(p.pathInput.Value())
@@ -329,8 +371,14 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 		// Create directory if it doesn't exist
 		os.MkdirAll(expanded, 0755)
 
-		p.focus = focusRelayURL
 		p.pathInput.Blur()
+		if p.ready { // hub edit → straight back to the hub
+			p.focus = focusSettings
+			p.settingsCursor = 0
+			return p, nil
+		}
+		// New-project linear flow: path → relay.
+		p.focus = focusRelayURL
 		p.relayInput.Focus()
 		return p, textinput.Blink
 	}
@@ -344,9 +392,15 @@ func (p projectPanel) updatePathInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		p.focus = focusPath
 		p.relayErr = ""
 		p.relayInput.Blur()
+		if p.ready { // editing from the hub
+			p.focus = focusSettings
+			p.settingsCursor = 1
+			return p, nil
+		}
+		// New-project linear flow: step back to path.
+		p.focus = focusPath
 		p.pathInput.Focus()
 		return p, textinput.Blink
 	case "enter":
@@ -360,9 +414,17 @@ func (p projectPanel) updateRelayInput(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 			}
 		}
 		p.relayErr = ""
-		p.focus = focusPresets
 		p.relayInput.Blur()
+		if p.ready { // hub edit → back to the Relay row
+			p.focus = focusSettings
+			p.settingsCursor = 1
+			return p, nil
+		}
+		// New-project linear flow: relay confirmed → project is ready; land in
+		// the hub on the Team row to nudge picking a team.
 		p.ready = true
+		p.focus = focusSettings
+		p.settingsCursor = 2
 		return p, nil
 	}
 
@@ -387,10 +449,6 @@ func validateRelayURL(raw string) error {
 
 func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	switch msg.String() {
-	case "esc":
-		p.focus = focusRelayURL
-		p.relayInput.Focus()
-		return p, textinput.Blink
 	case "up", "k":
 		if p.presetCursor > 0 {
 			p.presetCursor--
