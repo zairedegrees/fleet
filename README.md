@@ -99,6 +99,7 @@ coord is an independent MIT reimplementation of the [wrai.th](https://github.com
 fleet                         # interactive wizard
 fleet --last                  # relaunch the last saved fleet
 fleet --status                # per-agent state: idle / working, posture, last seen
+fleet --status --watch        # live-refresh the status until ctrl+c (--interval 2s default)
 fleet usage                   # per-project usage: agents, polling, tasks, vault
 fleet --kill                  # stop the last project's fleet
 fleet --kill-all              # stop every fleet across all projects (asks y/N)
