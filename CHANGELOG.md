@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.5] — 2026-06-17
+
+### Added
+- **Agent-to-agent conversations.** Three new coordination-core tools —
+  `start_conversation` (open a named thread, optionally posting the opening
+  message in one call), `get_conversation` (paginated, truncated thread fetch),
+  and `list_conversations` (your threads with message and unread counts). A new
+  `conversations` table is auto-migrated. The `/relay` skill teaches agents the
+  workflow; thread messages still arrive in the normal inbox, so an agent pulls
+  the full thread only when it needs the broader context.
+
+### Changed
+- **Leaner agent tool catalog.** `tools/list` now advertises only agent-facing
+  tools. The operator-only tools (`register_agent`, `register_profile`,
+  `deactivate_agent`, `list_orgs`) are still served on `tools/call` — the fleet
+  CLI calls them by name — but are dropped from every agent's catalog, trimming
+  ~780 context tokens per agent. Dropping `register_agent` also enforces the
+  no-self-register design (an agent can't call a tool it never sees).
+- **`send_message` enforces conversation integrity.** A `conversation_id` that
+  doesn't exist is rejected (start the conversation first); a valid one bumps
+  the thread's last-activity timestamp in the same transaction.
+
+### Docs
+- The README's token-economy claim is now backed by a real, transcript-based
+  measurement (an idle "check inbox" turn costs tens of thousands of tokens, not
+  ~1k) instead of the previous, underivable "95%".
+
 ## [0.1.4] — 2026-06-15
 
 ### Added
