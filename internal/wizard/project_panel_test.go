@@ -97,8 +97,8 @@ func TestProjectPanelRelayURLInvalidRejectedOnSubmit(t *testing.T) {
 		if p.ready {
 			t.Errorf("%q: panel must not become ready with an invalid relay URL", raw)
 		}
-		if !strings.Contains(p.View(true), "relay URL") {
-			t.Errorf("%q: the panel must show the validation error, got:\n%s", raw, p.View(true))
+		if !strings.Contains(p.View(true, 0), "relay URL") {
+			t.Errorf("%q: the panel must show the validation error, got:\n%s", raw, p.View(true, 0))
 		}
 	}
 }
@@ -118,7 +118,7 @@ func TestProjectPanelRelayURLValidAfterInvalidProceeds(t *testing.T) {
 	if p.focus != focusSettings || !p.ready {
 		t.Fatalf("corrected URL must confirm and move to settings, got focus=%v ready=%v", p.focus, p.ready)
 	}
-	if strings.Contains(p.View(true), "must start with") {
+	if strings.Contains(p.View(true, 0), "must start with") {
 		t.Error("a successful submit must clear the validation error")
 	}
 }
@@ -240,6 +240,22 @@ func TestProjectPanelHubEditReturnsToSettings(t *testing.T) {
 	p, _ = p.updateRelayInput(tea.KeyMsg{Type: tea.KeyEsc})
 	if p.focus != focusSettings {
 		t.Fatalf("hub relay-edit esc must return to settings, got %v", p.focus)
+	}
+}
+
+// The settings hub renders Path / Relay / Team rows, with the live agent count.
+func TestProjectPanelSettingsView(t *testing.T) {
+	p := newProjectPanel()
+	p.ready = true
+	p.focus = focusSettings
+	p.projName = "proj"
+	p.pathInput.SetValue("/tmp/proj")
+
+	out := p.View(true, 3)
+	for _, want := range []string{"Path:", "Relay:", "Team:", "3 agents"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("settings view missing %q, got:\n%s", want, out)
+		}
 	}
 }
 

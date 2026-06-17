@@ -320,7 +320,7 @@ func (m wizardModel) View() string {
 	sb.WriteString(title + "\n\n")
 
 	// Split panels
-	leftView := m.project.View(m.activePanel == panelLeft && !m.drawerOpen)
+	leftView := m.project.View(m.activePanel == panelLeft && !m.drawerOpen, m.agents.EnabledCount())
 
 	var rightView string
 	if m.drawerOpen {
@@ -356,17 +356,19 @@ func (m wizardModel) View() string {
 	if m.drawerOpen {
 		help = "tab=field  j/k=select  enter=save  esc=cancel"
 	} else if m.project.focus == focusProjectList {
-		help = "j/k=move  enter=select  q=quit"
+		help = "j/k move · enter open · q quit"
 	} else if m.activePanel == panelLeft && m.project.focus == focusPath {
-		help = "type path  tab=autocomplete  enter=confirm  esc=back  ctrl+c=quit"
+		help = "type path · tab autocomplete · enter confirm · esc back"
 	} else if m.activePanel == panelLeft && m.project.focus == focusRelayURL {
-		help = "type relay URL  enter=confirm  esc=back  ctrl+c=quit"
+		help = "type relay URL · enter confirm · esc back"
+	} else if m.activePanel == panelLeft && m.project.focus == focusSettings {
+		help = "j/k move · enter edit · tab agents · esc back"
 	} else if m.activePanel == panelLeft && m.project.focus == focusPresets {
-		help = "j/k=move  enter=select team  esc=settings  tab=agents panel  q=quit"
+		help = "j/k move · enter select · esc back"
 	} else if m.activePanel == panelLeft {
-		help = "j/k=move  enter=open  esc=back  tab=agents panel  q=quit"
+		help = "j/k move · enter select · q quit"
 	} else {
-		help = "j/k=move  space=toggle  e=edit  n=new  d=del  a=all  P=autonomy  enter=launch  s=save+launch  tab=presets  q=quit"
+		help = "j/k · space toggle · e edit · n new · d del · a all · P autonomy · tab settings · enter launch · s save+launch · esc back"
 	}
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	sb.WriteString(helpStyle.Render("  " + help))

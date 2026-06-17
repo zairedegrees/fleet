@@ -381,6 +381,17 @@ func TestWizardLoadedProjectLandsOnSettings(t *testing.T) {
 	}
 }
 
+// The settings hub help line points the user to the agents panel.
+func TestWizardSettingsHelp(t *testing.T) {
+	m := newWizardModel(nil)
+	m.project.ready = true
+	m.activePanel = panelLeft
+	m.project.focus = focusSettings
+	if !strings.Contains(m.View(), "tab agents") {
+		t.Errorf("settings help must mention tab to agents; got:\n%s", m.View())
+	}
+}
+
 // Esc walks up one level and only quits from the project list — never a surprise quit.
 func TestWizardEscLadder(t *testing.T) {
 	m := newWizardModel(nil)

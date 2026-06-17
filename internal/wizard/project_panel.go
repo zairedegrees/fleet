@@ -466,7 +466,7 @@ func (p projectPanel) updatePresetList(msg tea.KeyMsg) (projectPanel, tea.Cmd) {
 	return p, nil
 }
 
-func (p projectPanel) View(active bool) string {
+func (p projectPanel) View(active bool, agentCount int) string {
 	var sb strings.Builder
 
 	borderColor := lipgloss.Color("238")
@@ -476,23 +476,14 @@ func (p projectPanel) View(active bool) string {
 
 	sb.WriteString(dimStyle.Render("PROJECT") + "\n")
 
-	if p.focus == focusProjectList {
-		// Project list
+	switch p.focus {
+	case focusProjectList:
 		for i, proj := range p.existingProjects {
 			cursor := "  "
 			style := dimStyle
 			if i == p.projectCursor {
 				cursor = selectedStyle.Render("▸ ")
 				style = selectedStyle
-			}
-			label := proj.name
-			if proj.path != "" {
-				home, _ := os.UserHomeDir()
-				short := proj.path
-				if home != "" && strings.HasPrefix(short, home) {
-					short = "~" + short[len(home):]
-				}
-				label += " " + dimStyle.Render(short)
 			}
 			sb.WriteString(cursor + style.Render(proj.name))
 			if proj.path != "" {
@@ -505,7 +496,6 @@ func (p projectPanel) View(active bool) string {
 			}
 			sb.WriteString("\n")
 		}
-		// "New project..." sentinel
 		idx := len(p.existingProjects)
 		cursor := "  "
 		style := dimStyle
@@ -514,47 +504,61 @@ func (p projectPanel) View(active bool) string {
 			style = selectedStyle
 		}
 		sb.WriteString(cursor + style.Render("+ New project...") + "\n")
-	} else if p.focus == focusPath {
-		// Path input mode
+
+	case focusPath:
 		sb.WriteString("  Path: " + p.pathInput.View() + "\n")
-		// Show auto-derived name preview
 		val := strings.TrimSpace(p.pathInput.Value())
 		if val != "" {
 			name := filepath.Base(expandHome(val))
 			sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(name) + dimStyle.Render(" (auto)") + "\n")
 		}
-	} else if p.focus == focusRelayURL {
-		// Relay URL input mode — path is confirmed
+
+	case focusRelayURL:
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
 		sb.WriteString("  Relay: " + p.relayInput.View() + "\n")
 		if p.relayErr != "" {
 			sb.WriteString("  " + errorStyle.Render("⚠ "+p.relayErr) + "\n")
 		}
-	} else {
-		// Confirmed / settings hub — show name + path + relay.
-		// TODO(Task 3): when focus==focusSettings, render settingsCursor as a ▸
-		// cursor on the Path/Relay/Team rows so the hub looks navigable.
+
+	case focusSettings:
+		home, _ := os.UserHomeDir()
+		pathDisp := p.pathInput.Value()
+		if home != "" && strings.HasPrefix(pathDisp, home) {
+			pathDisp = "~" + pathDisp[len(home):]
+		}
+		rows := []struct{ label, val string }{
+			{"Path:  ", pathDisp},
+			{"Relay: ", p.RelayURL()},
+			{"Team:  ", fmt.Sprintf("%d agents", agentCount)},
+		}
+		for i, r := range rows {
+			cursor := "  "
+			vstyle := dimStyle
+			if i == p.settingsCursor {
+				cursor = selectedStyle.Render("▸ ")
+				vstyle = selectedStyle
+			}
+			sb.WriteString(cursor + dimStyle.Render(r.label) + vstyle.Render(r.val) + "\n")
+		}
+
+	case focusPresets:
 		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 		sb.WriteString("  " + dimStyle.Render("Path: ") + selectedStyle.Render(p.pathInput.Value()) + "\n")
-		sb.WriteString("  " + dimStyle.Render("Relay: ") + selectedStyle.Render(p.RelayURL()) + "\n")
-	}
-
-	sb.WriteString("\n")
-	sb.WriteString(dimStyle.Render("PRESET") + "\n")
-
-	if !p.ready {
-		sb.WriteString(dimStyle.Render("  Set project first...") + "\n")
-	} else {
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render("CHOOSE TEAM") + "\n")
 		for i, preset := range p.presets {
 			cursor := "  "
 			style := dimStyle
-			if p.focus == focusPresets && i == p.presetCursor {
+			if i == p.presetCursor {
 				cursor = selectedStyle.Render("▸ ")
 				style = selectedStyle
 			}
 			count := fmt.Sprintf("(%d)", len(preset.Agents))
 			sb.WriteString(cursor + style.Render(preset.Icon+" "+preset.Name) + " " + dimStyle.Render(count) + "\n")
 		}
+
+	default:
+		sb.WriteString("  " + dimStyle.Render("Name: ") + selectedStyle.Render(p.projName) + "\n")
 	}
 
 	panelStyle := lipgloss.NewStyle().
