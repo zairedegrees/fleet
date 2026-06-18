@@ -65,7 +65,7 @@ func advanceDemo(m *demoModel, step int, now time.Time) {
 // demoProjects maps the simulated model onto the exact projectStatus shape the
 // real renderer consumes, so fleet --demo exercises renderStatus / agentLine /
 // deriveOpState / relativeTime unchanged.
-func demoProjects(m demoModel, now time.Time) []projectStatus {
+func demoProjects(m demoModel) []projectStatus {
 	agents := make([]agentStatus, 0, len(m.agents))
 	for _, a := range m.agents {
 		tasks := 0
@@ -98,7 +98,7 @@ func demoRenderer() func() string {
 		now := time.Now()
 		advanceDemo(&model, step, now)
 		step++
-		return demoBanner + renderStatus(demoProjects(model, now), len(model.agents), "", now)
+		return demoBanner + renderStatus(demoProjects(model), len(model.agents), "", now)
 	}
 }
 

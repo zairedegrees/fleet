@@ -53,6 +53,21 @@ func TestAdvanceDemoBuilderWorkCycle(t *testing.T) {
 	if m.agents[1].working {
 		t.Fatal("builder still working at step 7; want idle")
 	}
+
+	advanceDemo(&m, 8, now) // lead picks up follow-up
+	if !m.agents[4].working {
+		t.Fatal("lead not working at step 8; want working")
+	}
+	advanceDemo(&m, 11, now) // lead finishes
+	if m.agents[4].working {
+		t.Fatal("lead still working at step 11; want idle")
+	}
+
+	m2 := newDemoModel(now)
+	advanceDemo(&m2, 5, now) // auditor checks in
+	if !m2.agents[2].lastSeen.Equal(now) {
+		t.Errorf("auditor lastSeen not refreshed at step 5: %v", m2.agents[2].lastSeen)
+	}
 }
 
 func TestDemoProjectsRenderWorkingAndIdle(t *testing.T) {
@@ -60,7 +75,7 @@ func TestDemoProjectsRenderWorkingAndIdle(t *testing.T) {
 	m := newDemoModel(now)
 	advanceDemo(&m, 3, now) // builder working, the rest idle
 
-	out := renderStatus(demoProjects(m, now), len(m.agents), "", now)
+	out := renderStatus(demoProjects(m), len(m.agents), "", now)
 
 	if !strings.Contains(out, "builder") || !strings.Contains(out, "working") {
 		t.Errorf("expected a working builder in:\n%s", out)
@@ -84,6 +99,7 @@ func TestDemoRendererBannerAndProgress(t *testing.T) {
 		t.Errorf("first frame missing demo banner:\n%s", first)
 	}
 
+	// Drive a full 12-step cycle; the scenario must produce a working agent.
 	sawWorking := strings.Contains(first, "working")
 	for i := 0; i < 12 && !sawWorking; i++ {
 		if strings.Contains(render(), "working") {
