@@ -34,16 +34,19 @@ release:
     owner: zairedegrees
     name: fleet
 
-brews:
+homebrew_casks:
   - name: fleet
+    binaries:
+      - fleet
+    homepage: "https://github.com/zairedegrees/fleet"
+    description: "Launch and orchestrate multi-agent Claude Code fleets from one command."
     repository:
       owner: zairedegrees
       name: homebrew-fleet
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/zairedegrees/fleet"
-    description: "Launch and orchestrate multi-agent Claude Code fleets from one command."
-    license: "MIT"
-    install: |
-      bin.install "fleet"
-    test: |
-      system "#{bin}/fleet", "--version"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/fleet"]
+          end
