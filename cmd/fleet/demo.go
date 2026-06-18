@@ -1,6 +1,11 @@
 package main
 
-import "time"
+import (
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
 
 // demoAgent is one simulated agent. working drives the real deriveOpState
 // (active + a task → "working", active + none → "idle"); lastSeen feeds the real
@@ -97,5 +102,21 @@ func demoRenderer() func() string {
 	}
 }
 
-// placeholder so the flag wiring in main.go compiles before step 5 is committed
-func runDemo() error { return nil }
+// runDemo plays a scripted, in-memory fleet through the real status --watch
+// renderer until ctrl+c. No tmux, relay, Claude, or persistence is touched, so
+// it runs anywhere with zero prerequisites. It reuses the same (tested)
+// watchStatus loop as fleet --status --watch.
+func runDemo() error {
+	interval := flagInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	render := demoRenderer()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	watchStatus(os.Stdout, interval, render, ticker.C, sig)
+	return nil
+}
