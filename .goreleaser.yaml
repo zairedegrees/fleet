@@ -1,0 +1,52 @@
+version: 2
+
+project_name: fleet
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fleet
+    main: ./cmd/fleet
+    binary: fleet
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.fleetVersion={{ .Version }}
+
+archives:
+  - id: fleet
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: zairedegrees
+    name: fleet
+
+homebrew_casks:
+  - name: fleet
+    binaries:
+      - fleet
+    homepage: "https://github.com/zairedegrees/fleet"
+    description: "Launch and orchestrate multi-agent Claude Code fleets from one command."
+    repository:
+      owner: zairedegrees
+      name: homebrew-fleet
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/fleet"]
+          end

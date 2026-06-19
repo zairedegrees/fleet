@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-06-19
+
+### Added
+- **Prebuilt binaries** for macOS and Linux (`amd64` + `arm64`), published on
+  every tagged release by goreleaser, with SHA-256 checksums.
+- **Homebrew install** (macOS): `brew install zairedegrees/fleet/fleet`. The cask
+  strips the quarantine attribute so the binary runs without a Gatekeeper prompt.
+- **Install script** (macOS & Linux): `curl -fsSL …/scripts/install.sh | sh` —
+  detects OS/arch, verifies the checksum, and installs to your bin dir.
+- **`fleet --demo`.** A zero-prerequisite, animated walkthrough of the live
+  status view against a scripted in-memory fleet — no tmux, relay, or Claude
+  Code required. Agents flip idle↔working so you can see the UI breathe; ctrl+c
+  exits, nothing is touched.
+
+### Changed
+- `fleet --version` is now stamped from the release tag at build time.
+
 ## [0.1.10] — 2026-06-18
 
 ### Added

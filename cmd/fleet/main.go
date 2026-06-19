@@ -19,8 +19,10 @@ import (
 )
 
 // fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
-// the release tag.
-const fleetVersion = "0.1.10"
+// the release tag. It is a var so release builds can stamp the real tag via
+// -ldflags "-X main.fleetVersion=<version>"; the literal is the source-build
+// fallback for `go build` / `go install`.
+var fleetVersion = "0.1.10"
 
 const defaultRelayURL = config.DefaultRelayURL
 
@@ -53,6 +55,7 @@ var (
 	flagKill         bool
 	flagKillAll      bool
 	flagStatus       bool
+	flagDemo         bool
 	flagDoctor       bool
 	flagForce        bool
 	flagWatch        bool
@@ -88,6 +91,7 @@ func main() {
 	root.Flags().BoolVar(&flagStatus, "status", false, "List active fleet sessions")
 	root.Flags().BoolVar(&flagWatch, "watch", false, "With --status: refresh continuously until ctrl+c")
 	root.Flags().DurationVar(&flagInterval, "interval", 2*time.Second, "Refresh interval for --status --watch")
+	root.Flags().BoolVar(&flagDemo, "demo", false, "Play a simulated fleet in the live status view (no tmux/relay/Claude needed)")
 	root.Flags().BoolVar(&flagDoctor, "doctor", false, "Check & install prerequisites")
 	root.Flags().BoolVar(&flagForce, "force", false, "Skip the --kill-all confirmation prompt")
 	root.PersistentFlags().StringVar(&flagRelayURL, "relay-url", "", "Override the relay URL for every command")
@@ -151,6 +155,8 @@ func main() {
 
 func run(cmd *cobra.Command, args []string) error {
 	switch {
+	case flagDemo:
+		return runDemo()
 	case flagDoctor:
 		return runDoctor()
 	case flagKillAll:
