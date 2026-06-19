@@ -50,12 +50,6 @@ fleet treats tokens as the scarce resource:
 
 ## Install
 
-**Homebrew** (macOS):
-
-```bash
-brew install zairedegrees/fleet/fleet
-```
-
 **Install script** (macOS & Linux):
 
 ```bash
@@ -76,7 +70,7 @@ cd fleet
 go build -o fleet ./cmd/fleet
 ```
 
-> Grabbed a release archive from your browser instead? macOS may quarantine it — clear the flag with `xattr -d com.apple.quarantine ./fleet`. (Homebrew and the install script handle this for you.)
+> Grabbed a release archive from your browser instead? macOS may quarantine it — clear the flag with `xattr -d com.apple.quarantine ./fleet`. (The install script does this for you.)
 
 ### Onboarding skill
 

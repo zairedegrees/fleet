@@ -9,8 +9,6 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 - **Prebuilt binaries** for macOS and Linux (`amd64` + `arm64`), published on
   every tagged release by goreleaser, with SHA-256 checksums.
-- **Homebrew install** (macOS): `brew install zairedegrees/fleet/fleet`. The cask
-  strips the quarantine attribute so the binary runs without a Gatekeeper prompt.
 - **Install script** (macOS & Linux): `curl -fsSL …/scripts/install.sh | sh` —
   detects OS/arch, verifies the checksum, and installs to your bin dir.
 - **`fleet --demo`.** A zero-prerequisite, animated walkthrough of the live
