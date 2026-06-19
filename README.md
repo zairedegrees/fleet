@@ -50,6 +50,20 @@ fleet treats tokens as the scarce resource:
 
 ## Install
 
+**Homebrew** (macOS):
+
+```bash
+brew install zairedegrees/fleet/fleet
+```
+
+**Install script** (macOS & Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zairedegrees/fleet/main/scripts/install.sh | sh
+```
+
+**Go toolchain** (any platform):
+
 ```bash
 go install github.com/zairedegrees/fleet/cmd/fleet@latest
 ```
@@ -61,6 +75,8 @@ git clone https://github.com/zairedegrees/fleet
 cd fleet
 go build -o fleet ./cmd/fleet
 ```
+
+> Grabbed a release archive from your browser instead? macOS may quarantine it — clear the flag with `xattr -d com.apple.quarantine ./fleet`. (Homebrew and the install script handle this for you.)
 
 ### Onboarding skill
 
@@ -97,6 +113,7 @@ coord is an independent MIT reimplementation of the [wrai.th](https://github.com
 
 ```bash
 fleet                         # interactive wizard
+fleet --demo                  # try it with zero setup: a simulated fleet in the live status view
 fleet --last                  # relaunch the last saved fleet
 fleet --status                # per-agent state: idle / working, posture, last seen
 fleet --status --watch        # live-refresh the status until ctrl+c (--interval 2s default)
