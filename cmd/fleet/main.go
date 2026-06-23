@@ -147,6 +147,7 @@ func main() {
 
 	root.AddCommand(newRelayCmd())
 	root.AddCommand(newCoordCmd())
+	root.AddCommand(newSuperviseCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
