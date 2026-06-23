@@ -9,6 +9,7 @@ permissions:
   contents: read
 
 jobs:
+  # Named "build" to satisfy the existing required-status-check on main.
   build:
     runs-on: ubuntu-latest
     steps:
@@ -24,5 +25,47 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
-      - name: Test
-        run: go test ./...
+      - name: Test (race)
+        run: go test -race ./...
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+      - name: Test (race)
+        run: go test -race ./...
+
+  cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile every release target
+        run: |
+          set -eux
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
+              go build -o /dev/null ./cmd/fleet
+          done
+
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install via scripts/install.sh (latest published release)
+        run: sh scripts/install.sh
+      - name: Verify the installed binary runs
+        run: |
+          set -eu
+          bin="$HOME/.local/bin/fleet"
+          [ -x "$bin" ] || bin="/usr/local/bin/fleet"
+          "$bin" --version
