@@ -21,7 +21,10 @@ type projectUsage struct {
 	RelayURL string
 
 	Agents  int // config-declared
-	Polling int // config-declared auto_talk=true (continuously burning tokens)
+	Polling int // config-declared posture==always (greets at boot)
+
+	Bounded        int     // config-declared posture==bounded
+	ProjBoundedUSD float64 // projected daily $ ceiling for bounded agents (estimate)
 
 	Registered   int    // relay, -1 unknown
 	Active       int    // relay, -1 unknown
@@ -68,6 +71,11 @@ func buildUsage(configs []*config.FleetConfig, override, fallback string) []proj
 		for _, a := range cfg.Agents {
 			if a.AutoTalk {
 				u.Polling++
+			}
+			if a.IsBounded() {
+				u.Bounded++
+				p := cfg.ResolveBounded(a)
+				u.ProjBoundedUSD += float64(p.MaxWakesPerDay) * p.CostPerWakeUSD
 			}
 		}
 
@@ -157,6 +165,10 @@ func renderUsage(projects []projectUsage) string {
 		fmt.Fprintf(&b, "    [%s]  relay: %s\n", term.Sanitize(p.Project), term.Sanitize(p.RelayURL))
 		fmt.Fprintf(&b, "      agents (config): %d declared — %d polling (auto_talk), %d idle  [config]\n",
 			p.Agents, p.Polling, p.Agents-p.Polling)
+		if p.Bounded > 0 {
+			fmt.Fprintf(&b, "      bounded (est):   %d agent(s) — ≤ ~$%.2f/day projected  [estimate]\n",
+				p.Bounded, p.ProjBoundedUSD)
+		}
 		// Keyed on the -1 sentinel, not the warning text — an unknown count
 		// must render "?" even if the reason got lost on the way.
 		if p.Registered < 0 || p.Active < 0 {
