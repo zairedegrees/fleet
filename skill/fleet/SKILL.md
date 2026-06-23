@@ -30,7 +30,7 @@ Propose a roster as a short table — for each agent: name, role, reports-to, an
 Rules:
 - Exactly one `is_executive` agent — the project owner / decision-maker.
 - Every worker `reports_to` the executive.
-- `auto_talk = false` by default (idle = zero tokens); set `auto_talk = true` only for an agent that must poll continuously.
+- `posture` per agent (default `idle`): `idle` (zero tokens, woken on dispatch) · `bounded` (proactive re-wake under a hard daily cap — `interval`, `active_hours`, `max_wakes_per_day`, `budget_usd` — driven by the auto-spawned supervisor) · `always` (greets at boot). The wizard sets `idle`/`always`; `bounded` is configured in TOML (`posture = "bounded"`, optional `[agents.bounded]`, fleet-wide `[bounded_defaults]`). Legacy `auto_talk = true` still parses as `always`.
 
 ## 3. Launch via the wizard
 
