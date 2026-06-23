@@ -189,6 +189,10 @@ func runKill() error {
 	config.SaveAsLast(cfg)
 	fmt.Printf("  Config saved for %s.\n", cfg.Project.Name)
 
+	// Always stop the bounded supervisor on --kill, even when no tmux sessions
+	// remain (the early return below would otherwise leak it).
+	stopSupervisor(cfg.Project.Name)
+
 	sessions, err := runner.ListProjectSessions(cfg.Project.Name)
 	if err != nil {
 		return fmt.Errorf("cannot list tmux sessions: %w", err)
@@ -607,6 +611,11 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	fmt.Print(launchSummary(cfg))
 	if logPath != "" {
 		fmt.Printf("  Config log: %s\n", logPath)
+	}
+	if err := spawnSupervisor(cfg); err != nil {
+		fmt.Printf("  ⚠ supervisor not started: %v\n", err)
+	} else if n := boundedCount(cfg); n > 0 {
+		fmt.Printf("  Supervisor watching %d bounded agent(s). Stop with: fleet --kill\n", n)
 	}
 	fmt.Println()
 	return launchErr
