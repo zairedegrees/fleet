@@ -73,6 +73,12 @@ type AgentConfig struct {
 	IsExecutive bool   `toml:"is_executive,omitempty"`
 	AutoTalk    bool   `toml:"auto_talk,omitempty"`
 
+	// Posture replaces the legacy auto_talk boolean: "idle" (default, woken on
+	// dispatch), "bounded" (proactive re-wake under a cap, driven by the
+	// supervisor), or "always" (greets at boot). Normalize() maps a legacy
+	// auto_talk into Posture and clears auto_talk so it is not re-emitted.
+	Posture string `toml:"posture,omitempty"`
+
 	// Model selects the per-agent Claude model (--model). "" inherits Claude's
 	// default. Lands on the unquoted launch argv, so it must be allowlist-known
 	// and shell-safe (validated in Validate).
@@ -266,6 +272,7 @@ func Load(path string) (*FleetConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.Normalize()
 	return &cfg, nil
 }
 
