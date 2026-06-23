@@ -226,8 +226,9 @@ func buildConfigureScript(cfg *config.FleetConfig, logPath string) string {
 		// call register_agent without profile_slug, and an old relay's full-replace
 		// UPDATE NULLs it, breaking task routing. fleet already registered this
 		// agent server-side (registerFleet). An idle agent stays dormant here —
-		// rename+color only, zero agent tokens.
-		if agent.AutoTalk {
+		// rename+color only, zero agent tokens. Bounded agents also stay dormant at
+		// boot: the supervisor wakes them on their own cadence. Only "always" greets.
+		if agent.GreetsAtBoot() {
 			script.WriteString(fmt.Sprintf("  wait_prompt %s 15\n", session))
 			writeWake(&script, session, agent.Name, project)
 		}
