@@ -15,14 +15,9 @@ import (
 	"github.com/zairedegrees/fleet/internal/doctor"
 	"github.com/zairedegrees/fleet/internal/relay"
 	"github.com/zairedegrees/fleet/internal/runner"
+	"github.com/zairedegrees/fleet/internal/version"
 	"github.com/zairedegrees/fleet/internal/wizard"
 )
-
-// fleetVersion is the CLI version (surfaced via `fleet --version`); it tracks
-// the release tag. It is a var so release builds can stamp the real tag via
-// -ldflags "-X main.fleetVersion=<version>"; the literal is the source-build
-// fallback for `go build` / `go install`.
-var fleetVersion = "0.3.0"
 
 const defaultRelayURL = config.DefaultRelayURL
 
@@ -81,7 +76,7 @@ func main() {
 	root := &cobra.Command{
 		Use:     "fleet",
 		Short:   "⚡ Launch multi-agent Claude Code fleets",
-		Version: fleetVersion,
+		Version: version.Version,
 		RunE:    run,
 	}
 

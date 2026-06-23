@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+
+	"github.com/zairedegrees/fleet/internal/version"
 )
 
 // handleMCP is the single JSON-RPC entry point. It speaks the subset of MCP the
@@ -44,7 +46,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		s.writeRaw(w, req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "fleet-coord", "version": "0.1.10"},
+			"serverInfo":      map[string]any{"name": "fleet-coord", "version": version.Version},
 		})
 
 	case "tools/list":
