@@ -22,7 +22,7 @@ import (
 // the release tag. It is a var so release builds can stamp the real tag via
 // -ldflags "-X main.fleetVersion=<version>"; the literal is the source-build
 // fallback for `go build` / `go install`.
-var fleetVersion = "0.1.10"
+var fleetVersion = "0.3.0"
 
 const defaultRelayURL = config.DefaultRelayURL
 
