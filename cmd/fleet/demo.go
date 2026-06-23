@@ -5,14 +5,19 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/zairedegrees/fleet/internal/config"
+	"github.com/zairedegrees/fleet/internal/supervisor"
 )
 
 // demoAgent is one simulated agent. working drives the real deriveOpState
 // (active + a task → "working", active + none → "idle"); lastSeen feeds the real
 // relativeTime so "seen Xs ago" advances against the wall clock between frames.
+// posture ("" falls back to autoTalk) lets the demo show a bounded agent.
 type demoAgent struct {
 	name     string
 	autoTalk bool
+	posture  string
 	working  bool
 	lastSeen time.Time
 }
@@ -31,7 +36,7 @@ func newDemoModel(now time.Time) demoModel {
 		agents: []demoAgent{
 			{name: "architect", autoTalk: true, lastSeen: now.Add(-8 * time.Second)},
 			{name: "builder", autoTalk: false, lastSeen: now.Add(-3 * time.Second)},
-			{name: "auditor", autoTalk: false, lastSeen: now.Add(-47 * time.Second)},
+			{name: "auditor", posture: config.PostureBounded, lastSeen: now.Add(-47 * time.Second)},
 			{name: "scribe", autoTalk: false, lastSeen: now.Add(-2 * time.Minute)},
 			{name: "lead", autoTalk: true, lastSeen: now.Add(-19 * time.Second)},
 		},
@@ -67,21 +72,34 @@ func advanceDemo(m *demoModel, step int, now time.Time) {
 // deriveOpState / relativeTime unchanged.
 func demoProjects(m demoModel) []projectStatus {
 	agents := make([]agentStatus, 0, len(m.agents))
+	bounded := 0
 	for _, a := range m.agents {
 		tasks := 0
 		if a.working {
 			tasks = 1
 		}
-		agents = append(agents, agentStatus{
+		st := agentStatus{
 			Agent:      a.name,
 			RelayState: "active",
 			Tasks:      tasks,
 			HasSession: true,
 			AutoTalk:   a.autoTalk,
+			Posture:    a.posture,
 			LastSeen:   a.lastSeen.Format(time.RFC3339),
-		})
+		}
+		if a.posture == config.PostureBounded {
+			bounded++
+			st.bounded = &supervisor.AgentState{WakesToday: 12, SpentUSD: 0.72}
+			st.boundedPolicy = config.BoundedPolicy{MaxWakesPerDay: 50, BudgetUSD: 3.00}
+		}
+		agents = append(agents, st)
 	}
-	return []projectStatus{{Project: m.project, Agents: agents}}
+	ps := projectStatus{Project: m.project, Agents: agents, BoundedAgents: bounded}
+	if bounded > 0 {
+		ps.SupervisorRunning = true
+		ps.SupervisorPID = 4823
+	}
+	return []projectStatus{ps}
 }
 
 // demoBanner heads the simulated status view so nobody mistakes it for a real

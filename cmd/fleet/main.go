@@ -625,16 +625,22 @@ func launch(cfg *config.FleetConfig, save bool) error {
 // role, then go quiet (token discipline). Counts come from the in-memory config
 // — coord has only just started, so this is intentionally not a live query.
 func launchSummary(cfg *config.FleetConfig) string {
-	autoTalk := 0
+	var autoTalk, bounded int
 	for _, a := range cfg.Agents {
-		if a.AutoTalk {
+		switch a.EffectivePosture() {
+		case config.PostureAlways:
 			autoTalk++
+		case config.PostureBounded:
+			bounded++
 		}
 	}
-	onDemand := len(cfg.Agents) - autoTalk
+	onDemand := len(cfg.Agents) - autoTalk - bounded
 	var b strings.Builder
 	b.WriteString("  Agents are registering and taking their roles, then they go quiet (token discipline).\n")
 	fmt.Fprintf(&b, "    %d greet at boot (auto-talk) · %d on-demand\n", autoTalk, onDemand)
+	if bounded > 0 {
+		fmt.Fprintf(&b, "    %d bounded (supervised, capped daily)\n", bounded)
+	}
 	b.WriteString("  Give them work:   fleet dispatch --to <agent> \"<task>\"\n")
 	b.WriteString("  See who's idle:   fleet --status\n")
 	return b.String()
