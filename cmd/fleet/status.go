@@ -13,6 +13,7 @@ import (
 	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/relay"
 	"github.com/zairedegrees/fleet/internal/runner"
+	"github.com/zairedegrees/fleet/internal/supervisor"
 	"github.com/zairedegrees/fleet/internal/term"
 )
 
@@ -35,13 +36,25 @@ type agentStatus struct {
 	RelayState string // relay status, "unregistered", "?" (unknown project), or "" when relay is down
 	Tasks      int
 	HasSession bool
-	AutoTalk   bool   // config posture: greets at boot vs woken on demand
+	AutoTalk   bool   // legacy mirror: greets at boot (posture==always)
 	LastSeen   string // relay last_seen (RFC3339), "" when unknown
+
+	// Posture is the resolved config posture (idle/bounded/always); "" falls back
+	// to AutoTalk for the label. bounded/boundedPolicy carry live supervisor
+	// bookkeeping for a bounded agent (nil when none yet).
+	Posture       string
+	bounded       *supervisor.AgentState
+	boundedPolicy config.BoundedPolicy
 }
 
 type projectStatus struct {
 	Project string
 	Agents  []agentStatus
+
+	// Supervisor surface: set when the project has bounded agents.
+	BoundedAgents     int
+	SupervisorPID     int
+	SupervisorRunning bool
 }
 
 // relayQuerier is the slice of relay.Client that status needs — a seam so the
@@ -237,10 +250,55 @@ func buildStatus(sessions []string, configs []*config.FleetConfig, defaultURL, o
 		if len(merged) == 0 {
 			continue
 		}
-		projects = append(projects, projectStatus{Project: project, Agents: merged})
+		ps := projectStatus{Project: project, Agents: merged}
+		enrichBounded(&ps, configs)
+		projects = append(projects, ps)
 	}
 
 	return projects, strings.Join(warnings, "; ")
+}
+
+// enrichBounded sets each agent's resolved posture and, for bounded agents,
+// attaches the live supervisor bookkeeping + resolved policy. It also fills the
+// project-level supervisor surface (count, pid, running). Pure-ish: it reads the
+// supervisor state file once per project, like the relay reads above.
+func enrichBounded(ps *projectStatus, configs []*config.FleetConfig) {
+	var cfg *config.FleetConfig
+	for _, c := range configs {
+		if c.Project.Name == ps.Project {
+			cfg = c
+			break
+		}
+	}
+	if cfg == nil {
+		return
+	}
+	byName := make(map[string]config.AgentConfig, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		byName[a.Name] = a
+	}
+	var st *supervisor.State
+	for i := range ps.Agents {
+		ac, ok := byName[ps.Agents[i].Agent]
+		if !ok {
+			continue
+		}
+		ps.Agents[i].Posture = ac.EffectivePosture()
+		if ac.IsBounded() {
+			ps.BoundedAgents++
+			if st == nil {
+				st, _ = supervisor.LoadState(ps.Project)
+			}
+			ps.Agents[i].boundedPolicy = cfg.ResolveBounded(ac)
+			if st != nil {
+				ps.Agents[i].bounded = st.Agents[ps.Agents[i].Agent]
+			}
+		}
+	}
+	if ps.BoundedAgents > 0 && st != nil {
+		ps.SupervisorPID = st.PID
+		ps.SupervisorRunning = alive(st.PID)
+	}
 }
 
 // relayURLFor resolves a project's relay URL from its own saved config,
@@ -351,6 +409,13 @@ func renderStatus(projects []projectStatus, sessionCount int, relayWarning strin
 		for _, a := range p.Agents {
 			fmt.Fprintf(&b, "      %s\n", agentLine(a, now))
 		}
+		if p.BoundedAgents > 0 {
+			state := "stopped"
+			if p.SupervisorRunning {
+				state = fmt.Sprintf("running (pid %d)", p.SupervisorPID)
+			}
+			fmt.Fprintf(&b, "      supervisor: %s · %d bounded\n", state, p.BoundedAgents)
+		}
 		b.WriteString("\n")
 	}
 	if hasIdle(projects) {
@@ -418,6 +483,27 @@ func relativeTime(lastSeen string, now time.Time) string {
 	}
 }
 
+// posture resolves the label posture, falling back to the legacy AutoTalk
+// mirror when Posture is unset (e.g. demo/legacy callers).
+func (a agentStatus) posture() string {
+	if a.Posture != "" {
+		return a.Posture
+	}
+	if a.AutoTalk {
+		return config.PostureAlways
+	}
+	return config.PostureIdle
+}
+
+// boundedBudgetSeg renders a bounded agent's daily wake/budget consumption.
+// Empty when there is no supervisor bookkeeping yet.
+func boundedBudgetSeg(as *supervisor.AgentState, p config.BoundedPolicy) string {
+	if as == nil {
+		return ""
+	}
+	return fmt.Sprintf("wakes %d/%d · ~$%.2f/$%.2f", as.WakesToday, p.MaxWakesPerDay, as.SpentUSD, p.BudgetUSD)
+}
+
 func agentLine(a agentStatus, now time.Time) string {
 	label := term.Sanitize(a.Agent)
 	var parts []string
@@ -425,9 +511,15 @@ func agentLine(a agentStatus, now time.Time) string {
 		parts = append(parts, deriveOpState(a.RelayState, a.Tasks))
 		// Posture is known only for registered ("active") agents.
 		if a.RelayState == "active" {
-			if a.AutoTalk {
+			switch a.posture() {
+			case config.PostureAlways:
 				parts = append(parts, "auto-talk")
-			} else {
+			case config.PostureBounded:
+				parts = append(parts, "bounded")
+				if seg := boundedBudgetSeg(a.bounded, a.boundedPolicy); seg != "" {
+					parts = append(parts, seg)
+				}
+			default:
 				parts = append(parts, "on-demand")
 			}
 		}
