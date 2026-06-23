@@ -147,6 +147,7 @@ func main() {
 
 	root.AddCommand(newRelayCmd())
 	root.AddCommand(newCoordCmd())
+	root.AddCommand(newSuperviseCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -187,6 +188,10 @@ func runKill() error {
 	// Auto-save before killing
 	config.SaveAsLast(cfg)
 	fmt.Printf("  Config saved for %s.\n", cfg.Project.Name)
+
+	// Always stop the bounded supervisor on --kill, even when no tmux sessions
+	// remain (the early return below would otherwise leak it).
+	stopSupervisor(cfg.Project.Name)
 
 	sessions, err := runner.ListProjectSessions(cfg.Project.Name)
 	if err != nil {
@@ -607,6 +612,11 @@ func launch(cfg *config.FleetConfig, save bool) error {
 	if logPath != "" {
 		fmt.Printf("  Config log: %s\n", logPath)
 	}
+	if err := spawnSupervisor(cfg); err != nil {
+		fmt.Printf("  ⚠ supervisor not started: %v\n", err)
+	} else if n := boundedCount(cfg); n > 0 {
+		fmt.Printf("  Supervisor watching %d bounded agent(s). Stop with: fleet --kill\n", n)
+	}
 	fmt.Println()
 	return launchErr
 }
@@ -615,16 +625,22 @@ func launch(cfg *config.FleetConfig, save bool) error {
 // role, then go quiet (token discipline). Counts come from the in-memory config
 // — coord has only just started, so this is intentionally not a live query.
 func launchSummary(cfg *config.FleetConfig) string {
-	autoTalk := 0
+	var autoTalk, bounded int
 	for _, a := range cfg.Agents {
-		if a.AutoTalk {
+		switch a.EffectivePosture() {
+		case config.PostureAlways:
 			autoTalk++
+		case config.PostureBounded:
+			bounded++
 		}
 	}
-	onDemand := len(cfg.Agents) - autoTalk
+	onDemand := len(cfg.Agents) - autoTalk - bounded
 	var b strings.Builder
 	b.WriteString("  Agents are registering and taking their roles, then they go quiet (token discipline).\n")
 	fmt.Fprintf(&b, "    %d greet at boot (auto-talk) · %d on-demand\n", autoTalk, onDemand)
+	if bounded > 0 {
+		fmt.Fprintf(&b, "    %d bounded (supervised, capped daily)\n", bounded)
+	}
 	b.WriteString("  Give them work:   fleet dispatch --to <agent> \"<task>\"\n")
 	b.WriteString("  See who's idle:   fleet --status\n")
 	return b.String()

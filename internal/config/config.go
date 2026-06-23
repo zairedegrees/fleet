@@ -19,6 +19,11 @@ type FleetConfig struct {
 	Project ProjectConfig `toml:"project"`
 	Claude  ClaudeConfig  `toml:"claude"`
 	Agents  []AgentConfig `toml:"agents"`
+
+	// BoundedDefaults are the fleet-wide bounded-policy defaults applied to every
+	// "bounded"-posture agent, under the built-in defaults and over by per-agent
+	// [agents.bounded]. Nil when unset.
+	BoundedDefaults *BoundedPolicy `toml:"bounded_defaults,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -72,6 +77,16 @@ type AgentConfig struct {
 	ReportsTo   string `toml:"reports_to,omitempty"`
 	IsExecutive bool   `toml:"is_executive,omitempty"`
 	AutoTalk    bool   `toml:"auto_talk,omitempty"`
+
+	// Posture replaces the legacy auto_talk boolean: "idle" (default, woken on
+	// dispatch), "bounded" (proactive re-wake under a cap, driven by the
+	// supervisor), or "always" (greets at boot). Normalize() maps a legacy
+	// auto_talk into Posture and keeps auto_talk as a derived mirror.
+	Posture string `toml:"posture,omitempty"`
+
+	// Bounded overrides the fleet-wide bounded defaults for this agent. Only
+	// meaningful when Posture == "bounded". Nil inherits.
+	Bounded *BoundedPolicy `toml:"bounded,omitempty"`
 
 	// Model selects the per-agent Claude model (--model). "" inherits Claude's
 	// default. Lands on the unquoted launch argv, so it must be allowlist-known
@@ -213,6 +228,14 @@ func (cfg *FleetConfig) Validate() error {
 		if len(a.Persona) > maxPersonaBytes {
 			return fmt.Errorf("persona for agent %q exceeds %d bytes", a.Name, maxPersonaBytes)
 		}
+		if a.Posture != "" && !validPostures[a.Posture] {
+			return fmt.Errorf("invalid posture %q for agent %q", a.Posture, a.Name)
+		}
+		if a.Bounded != nil {
+			if err := a.Bounded.Validate(); err != nil {
+				return fmt.Errorf("agent %q bounded policy: %w", a.Name, err)
+			}
+		}
 		// Skills never reach a shell — name grammar + no empties/dupes is enough.
 		seenSkill := make(map[string]bool)
 		for _, s := range a.Skills {
@@ -242,6 +265,11 @@ func (cfg *FleetConfig) Validate() error {
 		}
 		seen[a.Name] = true
 	}
+	if cfg.BoundedDefaults != nil {
+		if err := cfg.BoundedDefaults.Validate(); err != nil {
+			return fmt.Errorf("bounded_defaults: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -266,6 +294,7 @@ func Load(path string) (*FleetConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.Normalize()
 	return &cfg, nil
 }
 

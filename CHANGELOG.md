@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`bounded` agent posture + supervisor.** Agent posture graduates from the
+  `auto_talk` boolean to a three-tier enum: `idle` (default, zero tokens, woken
+  on dispatch), `bounded` (proactive re-wake under a hard daily cap), and
+  `always` (greets at boot, the old `auto_talk = true`). A `bounded` agent is
+  re-woken on its own cadence by an auto-spawned, per-project **supervisor**
+  (`fleet supervise`) that enforces `interval`, `active_hours`,
+  `max_wakes_per_day`, and a daily `budget_usd`, with automatic backoff when an
+  agent keeps finding no work. The supervisor starts detached at launch when any
+  agent is bounded and is stopped by `fleet --kill`; it fails safe (if it dies,
+  agents fall back to idle). Configure via `posture = "bounded"`, optional
+  per-agent `[agents.bounded]`, and fleet-wide `[bounded_defaults]`.
+- **Posture + budget in `fleet --status`** (per-agent `bounded` label with live
+  `wakes N/max · ~$spent/$budget`, plus a supervisor running/stopped line) and a
+  projected daily **cost estimate** for bounded agents in `fleet usage`. Cost is
+  always a labelled estimate, never a measured figure.
+
+### Changed
+- `auto_talk` is now a back-compatible alias: `auto_talk = true` loads as
+  `posture = "always"`; existing configs keep working unchanged.
+
 ## [0.2.0] — 2026-06-19
 
 ### Added
