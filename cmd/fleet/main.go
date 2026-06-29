@@ -131,6 +131,7 @@ func main() {
 		RunE:  runUsage,
 	}
 	root.AddCommand(usageCmd)
+	root.AddCommand(newCostCmd())
 
 	stopCmd := &cobra.Command{
 		Use:   "stop <agent>",

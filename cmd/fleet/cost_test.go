@@ -1,11 +1,16 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/cost"
+	"github.com/zairedegrees/fleet/internal/relay"
 )
 
 func TestRenderCostMeasuredIdleAndUnknownRows(t *testing.T) {
@@ -85,3 +90,50 @@ func TestParseSince(t *testing.T) {
 		t.Error("bogus --since must error")
 	}
 }
+
+func TestBuildCostMeasuresAndFlagsUnknown(t *testing.T) {
+	projectsDir := t.TempDir()
+	sub := filepath.Join(projectsDir, "-proj")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// dev: 1M input on opus = $5.00 exactly
+	os.WriteFile(filepath.Join(sub, "sess-dev.jsonl"), []byte(
+		`{"type":"assistant","timestamp":"2026-06-29T10:00:00Z","message":{"model":"claude-opus-4-8","usage":{"input_tokens":1000000,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}`+"\n"), 0o644)
+
+	fake := &fakeQuerier{agents: map[string][]relay.Agent{"demo": {
+		{Name: "dev", SessionID: "sess-dev"},
+		{Name: "ghost"}, // no session_id → unknown
+	}}}
+	installFakeRelay(t, fake)
+
+	pcs := buildCost([]*config.FleetConfig{usageConfig("demo")}, "", defaultRelayURL, time.Time{}, "all", projectsDir)
+	if len(pcs) != 1 {
+		t.Fatalf("want 1 project, got %d", len(pcs))
+	}
+	p := pcs[0]
+
+	var dev *agentCost
+	for i := range p.Agents {
+		if p.Agents[i].Name == "dev" {
+			dev = &p.Agents[i]
+		}
+	}
+	if dev == nil || !dev.USDKnown || dev.USD < 4.99 || dev.USD > 5.01 {
+		t.Errorf("dev measured spend wrong: %+v", dev)
+	}
+	if p.TotalKnown {
+		t.Error("ghost agent has no session_id → project total must be unknown")
+	}
+}
+
+func TestBuildCostRelayDownIsExplicit(t *testing.T) {
+	fake := &fakeQuerier{listErr: errTestRelayDown}
+	installFakeRelay(t, fake)
+	pcs := buildCost([]*config.FleetConfig{usageConfig("demo")}, "", defaultRelayURL, time.Time{}, "all", t.TempDir())
+	if len(pcs) != 1 || pcs[0].RelayWarning == "" || pcs[0].TotalKnown {
+		t.Errorf("relay down must set a warning and unknown total: %+v", pcs)
+	}
+}
+
+var errTestRelayDown = fmt.Errorf("connection refused")

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
+	"github.com/zairedegrees/fleet/internal/config"
 	"github.com/zairedegrees/fleet/internal/cost"
 	"github.com/zairedegrees/fleet/internal/term"
 )
@@ -117,4 +120,133 @@ func modelTokenSummary(byModel map[string]cost.Usage) string {
 			compactTokens(u.CacheRead), compactTokens(u.CacheCreate)))
 	}
 	return strings.Join(parts, "  |  ")
+}
+
+var (
+	flagCostSince   string
+	flagCostProject string
+)
+
+func runCost(cmd *cobra.Command, args []string) error {
+	configs := loadSavedConfigs()
+	if len(configs) == 0 {
+		fmt.Println("  No saved fleet configs in ~/.fleet/configs — nothing to report.")
+		return nil
+	}
+	if flagCostProject != "" {
+		filtered := configs[:0]
+		for _, c := range configs {
+			if strings.EqualFold(c.Project.Name, flagCostProject) {
+				filtered = append(filtered, c)
+			}
+		}
+		configs = filtered
+		if len(configs) == 0 {
+			fmt.Printf("  No saved config for project %q.\n", flagCostProject)
+			return nil
+		}
+	}
+
+	since, label, err := parseSince(flagCostSince, time.Now())
+	if err != nil {
+		return err
+	}
+
+	fallback := defaultRelayURL
+	if cfg, err := loadLastConfig(); err == nil && cfg.Project.RelayURL != "" {
+		fallback = cfg.Project.RelayURL
+	}
+
+	fmt.Print(renderCost(buildCost(configs, flagRelayURL, fallback, since, label, cost.DefaultProjectsDir())))
+	return nil
+}
+
+// buildCost turns saved configs into the measured per-project cost view. Relay
+// URLs resolve like --status/--usage. Every unknown (no session_id, no
+// transcript, unpriced model, relay down) renders "?" — never a faked 0; a
+// project total is unknown if any contributing agent's USD is unknown.
+func buildCost(configs []*config.FleetConfig, override, fallback string, since time.Time, windowLabel, projectsDir string) []projectCost {
+	clients := map[string]relayQuerier{}
+	relayDown := map[string]string{}
+	var out []projectCost
+
+	for _, cfg := range configs {
+		pc := projectCost{Project: cfg.Project.Name, Window: windowLabel, TotalKnown: true}
+
+		url := override
+		if url == "" {
+			url = relayURLFor(cfg.Project.Name, configs, fallback)
+		}
+		pc.RelayURL = url
+
+		client, ok := clients[url]
+		if !ok {
+			client = newStatusClient(url)
+			clients[url] = client
+		}
+
+		if reason, down := relayDown[url]; down {
+			pc.RelayWarning = reason
+			pc.TotalKnown = false
+			out = append(out, pc)
+			continue
+		}
+		agents, err := client.ListAgents(cfg.Project.Name)
+		if err != nil {
+			pc.RelayWarning = fmt.Sprintf("relay unavailable at %s (%v)", url, err)
+			relayDown[url] = pc.RelayWarning
+			pc.TotalKnown = false
+			out = append(out, pc)
+			continue
+		}
+
+		for _, a := range agents {
+			ac := agentCost{Name: a.Name}
+			switch {
+			case a.SessionID == "":
+				ac.Note = "(no session_id — agent never ran)"
+			default:
+				path, err := cost.ResolveTranscript(projectsDir, a.SessionID)
+				if err != nil {
+					ac.Note = "(no transcript yet)"
+					break
+				}
+				byModel, err := cost.ScanTranscript(path, since)
+				if err != nil {
+					ac.Note = "(transcript unreadable)"
+					break
+				}
+				ac.ByModel = byModel
+				ac.USDKnown = true
+				for model, u := range byModel {
+					usd, known := cost.CostUSD(u, model)
+					if !known {
+						ac.USDKnown = false
+						continue
+					}
+					ac.USD += usd
+				}
+			}
+
+			if ac.Note != "" || !ac.USDKnown {
+				pc.TotalKnown = false
+			} else {
+				pc.TotalUSD += ac.USD
+			}
+			pc.Agents = append(pc.Agents, ac)
+		}
+		out = append(out, pc)
+	}
+	return out
+}
+
+func newCostCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "cost",
+		Short: "Measured token spend per agent, from Claude Code transcripts",
+		RunE:  runCost,
+	}
+	c.Flags().StringVar(&flagCostSince, "since", "today", "Window: today | all | a Go duration like 24h")
+	c.Flags().StringVar(&flagCostProject, "project", "", "Limit to one project by name")
+	return c
 }
