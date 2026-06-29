@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-06-29
+
+### Added
+- **`fleet cost`.** Measured per-agent token spend (cost-weighted USD) mined
+  from each agent's Claude Code transcript over a `--since` window (`today` by
+  default, `all`, or a Go duration like `24h`). A new pure `internal/cost`
+  package owns the per-model pricing table and the transcript scan; unknowns
+  render `?` and an unpriced model renders `$?` — never a faked `$0`. The
+  measured view sits beside `fleet usage`'s projection.
+
 ## [0.3.0] — 2026-06-23
 
 ### Added

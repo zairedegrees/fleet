@@ -44,6 +44,8 @@ fleet treats tokens as the scarce resource:
 - **Task dispatch + wake** in one step, routed through the relay.
 - **Live logs**: stream any agent's pane, follow mode polls once a second.
 - **Readable status**: `fleet --status` shows each agent's derived state (idle / working), posture, and last-seen — with a legend — instead of a raw registration flag.
+- **Measured cost**: `fleet cost` reports real per-agent token spend (cost-weighted USD) mined from each agent's Claude Code transcript over a `--since` window — unknowns render `?`, an unpriced model renders `$?`, never a faked `$0`. It's the measured counterpart to `fleet usage`'s projection.
+- **Bounded posture + supervisor**: agents default to `idle` (zero tokens, woken on dispatch); a `bounded` agent is proactively re-woken under a hard daily cap (interval, active hours, max wakes, `budget_usd`) by an auto-spawned per-project supervisor (`fleet supervise`), with backoff and fail-safe to idle.
 - **Runtime fleet management**: `add` and `stop` agents without restarting the team.
 - **Doctor**: checks tmux, the Claude Code CLI, iTerm2, and the relay, with install hints.
 - **Persistent config**: every launch is saved as TOML, relaunch with `fleet --last`.
@@ -112,6 +114,8 @@ fleet --last                  # relaunch the last saved fleet
 fleet --status                # per-agent state: idle / working, posture, last seen
 fleet --status --watch        # live-refresh the status until ctrl+c (--interval 2s default)
 fleet usage                   # per-project usage: agents, polling, tasks, vault
+fleet cost                    # measured per-agent token spend (today by default)
+fleet cost --since all        # whole current session (also: --since 24h, --project <name>)
 fleet --kill                  # stop the last project's fleet
 fleet --kill-all              # stop every fleet across all projects (asks y/N)
 fleet --doctor                # check prerequisites
@@ -129,26 +133,29 @@ fleet stop <agent>                     # graceful /exit, then kill if needed
 
 ```
     [acme-api]
-      dev      [working · on-demand · 1 task(s) · seen 12s ago]
+      dev      [working · bounded · wakes 3/10 · ~$0.18/$1.00 · 1 task(s) · seen 12s ago]
       auditor  [idle · auto-talk · seen 2m ago]
       ops      [idle · on-demand · seen 5m ago]
+      supervisor: running (pid 18342) · 1 bounded
 
   idle = registered, in standby (token discipline). Wake: fleet dispatch --to <agent> "<task>"
 ```
 
-State is derived from the live task count: `idle` (registered, no active task), `working` (one or more active tasks), or `registered` when the count is unknown. Each line also carries the agent's posture (`auto-talk` greets at boot vs `on-demand` woken on dispatch) and when it was last seen. Agents the core doesn't know show `unregistered`, registered agents without a tmux session appear as ghosts (`no tmux session`), and if the core is down the view degrades to a `⚠` warning followed by the tmux sessions only.
+State is derived from the live task count: `idle` (registered, no active task), `working` (one or more active tasks), or `registered` when the count is unknown. Each line also carries the agent's posture — `on-demand` (idle, woken on dispatch), `bounded` (proactively re-woken under a daily cap by the supervisor), or `auto-talk` (greets at boot) — and when it was last seen. When a project has bounded agents, the view adds a supervisor line showing wakes-used/cap and spend/budget. Agents the core doesn't know show `unregistered`, registered agents without a tmux session appear as ghosts (`no tmux session`), and if the core is down the view degrades to a `⚠` warning followed by the tmux sessions only.
 
 ## Architecture
 
 ```
-cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, relay, lifecycle flags
+cmd/fleet            cobra CLI: wizard, dispatch, logs, add, stop, usage, cost, supervise, relay, lifecycle flags
 internal/wizard      Bubble Tea TUI: project panel, agent panel, presets, drawer
 internal/scanner     tech-stack detection, agent suggestions
 internal/runner      tmux sessions, iTerm2 grid, async agent config, .mcp.json provisioning
 internal/coord       native coordination core: MCP-over-HTTP server + pure-Go SQLite store (default)
 internal/coordmgr    runs coord as a detached child; selects the embedded vs. downloaded backend
+internal/supervisor  bounded-posture re-wake scheduler (caps, active hours, backoff)
 internal/relaymgr    downloads + lifecycle-manages the AGPL agent-relay binary (opt-in fallback)
 internal/relay       MCP HTTP client (list, dispatch, profiles, vault)
+internal/cost        measured per-agent token spend from Claude Code transcripts
 internal/config      TOML config, validation, last-run persistence
 internal/doctor      prerequisite checks with install hints
 internal/term        sanitizes relay-sourced strings before terminal output
