@@ -34,6 +34,12 @@ func newSuperviseCmd() *cobra.Command {
 			if url == "" {
 				url = defaultRelayURL
 			}
+			lf, err := acquireSupervisorLock(project)
+			if err != nil {
+				fmt.Printf("  %v — not starting a second one\n", err)
+				return nil
+			}
+			defer lf.Close()
 			// Record our PID so --kill can find and stop us.
 			if err := recordSupervisorPID(project, os.Getpid()); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: could not record supervisor pid: %v\n", err)
@@ -44,6 +50,29 @@ func newSuperviseCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project to supervise (defaults to last)")
 	return cmd
+}
+
+func supervisorLockPath(project string) string {
+	return filepath.Join(config.FleetDir(), project+".supervisor.lock")
+}
+
+// acquireSupervisorLock takes a process-lifetime exclusive flock for the
+// project's supervisor (mirrors coordmgr's single-start guard). A non-nil error
+// means another supervisor already holds it. Keep the returned file open for as
+// long as the supervisor runs; closing it (or process exit) releases the lock.
+func acquireSupervisorLock(project string) (*os.File, error) {
+	if err := os.MkdirAll(config.FleetDir(), 0o755); err != nil {
+		return nil, err
+	}
+	lf, err := os.OpenFile(supervisorLockPath(project), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		lf.Close()
+		return nil, fmt.Errorf("supervisor already running for %s", project)
+	}
+	return lf, nil
 }
 
 // recordSupervisorPID stamps our PID into the project's supervisor state so
