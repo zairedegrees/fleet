@@ -51,12 +51,19 @@ func renderCost(projects []projectCost) string {
 				fmt.Fprintf(&b, "      %-10s %s  →  ?\n", term.Sanitize(a.Name), term.Sanitize(a.Note))
 				continue
 			}
-			fmt.Fprintf(&b, "      %-10s %s  →  %s   [measured]\n",
-				term.Sanitize(a.Name), modelTokenSummary(a.ByModel), usdLabel(a.USD, a.USDKnown))
+			tag := "[measured]"
+			if !a.USDKnown {
+				tag = "(unpriced model)"
+			}
+			fmt.Fprintf(&b, "      %-10s %s  →  %s   %s\n",
+				term.Sanitize(a.Name), modelTokenSummary(a.ByModel), usdLabel(a.USD, a.USDKnown), tag)
 		}
 		b.WriteString("      ─────\n")
 		fmt.Fprintf(&b, "      %-10s →  %s\n", "total", usdLabel(p.TotalUSD, p.TotalKnown))
 		b.WriteString("\n")
+	}
+	if len(projects) > 0 {
+		fmt.Fprintf(&b, "  note: measured = current session only; a respawned agent starts a new transcript.\n")
 	}
 	return b.String()
 }
@@ -244,6 +251,7 @@ func newCostCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "cost",
 		Short: "Measured token spend per agent, from Claude Code transcripts",
+		Args:  cobra.NoArgs,
 		RunE:  runCost,
 	}
 	c.Flags().StringVar(&flagCostSince, "since", "today", "Window: today | all | a Go duration like 24h")

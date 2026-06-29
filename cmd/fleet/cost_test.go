@@ -137,3 +137,52 @@ func TestBuildCostRelayDownIsExplicit(t *testing.T) {
 }
 
 var errTestRelayDown = fmt.Errorf("connection refused")
+
+func TestRenderCostFootnoteAppearsWithProjects(t *testing.T) {
+	projects := []projectCost{{
+		Project: "fleet", RelayURL: "http://127.0.0.1:8787",
+		Window:   "since today (00:00 local)",
+		TotalUSD: 0, TotalKnown: true,
+		Agents: []agentCost{
+			{Name: "dev", USD: 0, USDKnown: true, ByModel: map[string]cost.Usage{}},
+		},
+	}}
+	out := renderCost(projects)
+	if !strings.Contains(out, "current session only") {
+		t.Errorf("renderCost must include single-session caveat when projects are present; got:\n%s", out)
+	}
+}
+
+func TestRenderCostFootnoteAbsentWhenNoProjects(t *testing.T) {
+	out := renderCost([]projectCost{})
+	if strings.Contains(out, "current session only") {
+		t.Errorf("renderCost must not emit footnote when there are no projects; got:\n%s", out)
+	}
+}
+
+func TestRenderCostUnpricedModelLabel(t *testing.T) {
+	projects := []projectCost{{
+		Project: "p", RelayURL: "http://127.0.0.1:8787",
+		Window:     "since today (00:00 local)",
+		TotalKnown: false,
+		Agents: []agentCost{
+			{
+				Name:     "bot",
+				ByModel:  map[string]cost.Usage{"gpt-4o": {In: 1000}},
+				USD:      0,
+				USDKnown: false,
+				// Note is empty: transcript was scanned, but model had no price
+			},
+		},
+	}}
+	out := renderCost(projects)
+	if !strings.Contains(out, "(unpriced model)") {
+		t.Errorf("unpriced-model agent must render (unpriced model); got:\n%s", out)
+	}
+	if !strings.Contains(out, "$?") {
+		t.Errorf("unpriced-model agent must render $?; got:\n%s", out)
+	}
+	if strings.Contains(out, "[measured]") {
+		t.Errorf("unpriced-model agent must NOT render [measured]; got:\n%s", out)
+	}
+}
