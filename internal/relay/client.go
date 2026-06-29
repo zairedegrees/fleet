@@ -23,6 +23,7 @@ type Agent struct {
 	IsExecutive bool   `json:"is_executive"`
 	Color       string `json:"color"`
 	LastSeen    string `json:"last_seen"`
+	SessionID   string `json:"session_id"`
 }
 
 type mpcRequest struct {
