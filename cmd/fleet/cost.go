@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zairedegrees/fleet/internal/cost"
 	"github.com/zairedegrees/fleet/internal/term"
@@ -77,6 +78,25 @@ func compactTokens(n int64) string {
 
 func shortModel(m string) string {
 	return strings.TrimPrefix(m, "claude-")
+}
+
+// parseSince turns the --since flag into a lower bound and a human label.
+// "" / "today" → local midnight; "all" → zero time (no bound); a Go duration
+// → now-duration. now is a parameter so the resolution stays testable.
+func parseSince(s string, now time.Time) (time.Time, string, error) {
+	switch s {
+	case "", "today":
+		y, mo, d := now.Date()
+		return time.Date(y, mo, d, 0, 0, 0, 0, now.Location()), "since today (00:00 local)", nil
+	case "all":
+		return time.Time{}, "all (entire session)", nil
+	default:
+		dur, err := time.ParseDuration(s)
+		if err != nil {
+			return time.Time{}, "", fmt.Errorf("invalid --since %q: use 'today', 'all', or a duration like 24h", s)
+		}
+		return now.Add(-dur), fmt.Sprintf("since %s ago", s), nil
+	}
 }
 
 // modelTokenSummary renders one segment per model, models sorted for stable output.

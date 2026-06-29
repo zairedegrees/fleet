@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zairedegrees/fleet/internal/cost"
 )
@@ -61,5 +62,26 @@ func TestRenderCostNoteSanitized(t *testing.T) {
 	}
 	if !strings.Contains(out, "hack") {
 		t.Errorf("renderCost must keep printable chars from Note; got:\n%s", out)
+	}
+}
+
+func TestParseSince(t *testing.T) {
+	now := time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC)
+
+	midnight, label, err := parseSince("today", now)
+	if err != nil || !midnight.Equal(time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("today => %v (%q) err=%v", midnight, label, err)
+	}
+	if empty, _, _ := parseSince("", now); !empty.Equal(time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)) {
+		t.Error("empty --since must default to today")
+	}
+	if z, _, _ := parseSince("all", now); !z.IsZero() {
+		t.Error("all must be the zero time (no lower bound)")
+	}
+	if d, _, err := parseSince("2h", now); err != nil || !d.Equal(now.Add(-2*time.Hour)) {
+		t.Errorf("2h => %v err=%v", d, err)
+	}
+	if _, _, err := parseSince("bogus", now); err == nil {
+		t.Error("bogus --since must error")
 	}
 }
