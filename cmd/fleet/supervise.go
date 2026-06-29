@@ -35,15 +35,28 @@ func newSuperviseCmd() *cobra.Command {
 				url = defaultRelayURL
 			}
 			// Record our PID so --kill can find and stop us.
-			st, _ := supervisor.LoadState(project)
-			st.PID = os.Getpid()
-			_ = supervisor.SaveState(st)
+			if err := recordSupervisorPID(project, os.Getpid()); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: could not record supervisor pid: %v\n", err)
+			}
 			fmt.Printf("  supervisor running for %s (pid %d)\n", project, os.Getpid())
 			return supervisor.Run(project, url, supervisorTick)
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project to supervise (defaults to last)")
 	return cmd
+}
+
+// recordSupervisorPID stamps our PID into the project's supervisor state so
+// `fleet --kill` can find us. A corrupt/unreadable state file (LoadState
+// returns nil,err) must not panic — fall back to a fresh state — and a failed
+// write is surfaced, not swallowed, since a missing PID makes us unstoppable.
+func recordSupervisorPID(project string, pid int) error {
+	st, err := supervisor.LoadState(project)
+	if err != nil || st == nil {
+		st = &supervisor.State{Project: project, Agents: map[string]*supervisor.AgentState{}}
+	}
+	st.PID = pid
+	return supervisor.SaveState(st)
 }
 
 // spawnSupervisor re-execs `fleet supervise` detached so it survives fleet's
