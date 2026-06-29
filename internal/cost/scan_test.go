@@ -44,3 +44,29 @@ func TestScanTranscriptZeroSinceCountsAll(t *testing.T) {
 		t.Errorf("zero since must include every turn; got %+v", got)
 	}
 }
+
+func TestResolveTranscriptFindsNestedSession(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "-Users-x-proj")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sid := "abc-123"
+	want := filepath.Join(nested, sid+".jsonl")
+	if err := os.WriteFile(want, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveTranscript(root, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestResolveTranscriptMissingErrors(t *testing.T) {
+	if _, err := ResolveTranscript(t.TempDir(), "nope"); err == nil {
+		t.Error("missing transcript must error, not return an empty path")
+	}
+}

@@ -3,7 +3,11 @@ package cost
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -56,4 +60,43 @@ func ScanTranscript(path string, since time.Time) (map[string]Usage, error) {
 		out[line.Message.Model] = u
 	}
 	return out, sc.Err()
+}
+
+// DefaultProjectsDir is where Claude Code stores per-project transcripts.
+func DefaultProjectsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
+// ResolveTranscript finds the <sessionID>.jsonl transcript anywhere under
+// projectsDir (a session lives in exactly one file regardless of which
+// encoded-cwd folder holds it). Unreadable subtrees are skipped; a missing
+// transcript is an error the caller turns into "?".
+func ResolveTranscript(projectsDir, sessionID string) (string, error) {
+	if projectsDir == "" || sessionID == "" {
+		return "", fmt.Errorf("cost: empty projectsDir or sessionID")
+	}
+	want := sessionID + ".jsonl"
+	found := ""
+	stop := errors.New("found")
+	err := filepath.WalkDir(projectsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip unreadable subtree
+		}
+		if !d.IsDir() && d.Name() == want {
+			found = path
+			return stop
+		}
+		return nil
+	})
+	if found != "" {
+		return found, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("cost: no transcript %s under %s", want, projectsDir)
 }
