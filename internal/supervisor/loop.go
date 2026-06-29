@@ -1,6 +1,8 @@
 package supervisor
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/zairedegrees/fleet/internal/config"
@@ -25,7 +27,10 @@ func tick(project string, agents []BoundedAgent, deps Deps) error {
 	}
 	now := deps.Now()
 	for _, name := range decideWakes(st, agents, now) {
-		woke, _ := deps.Wake(project, name) // never fatal; a busy/ghost pane is just "not woken"
+		woke, werr := deps.Wake(project, name) // never fatal; a busy/ghost pane is just "not woken"
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "  supervisor: wake %s failed: %v\n", name, werr)
+		}
 		if !woke {
 			// Phantom wake: refund the provisional charge decideWakes made and
 			// retry on the next tick rather than burning the daily cap.

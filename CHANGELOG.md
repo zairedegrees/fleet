@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Supervisor process safety.** The bounded-posture supervisor now (1) guards
+  PID recording against a corrupt state file — a previously reachable
+  nil-dereference that could orphan an un-killable, token-spending supervisor;
+  (2) holds an exclusive `flock` for its process lifetime so a second launch
+  can't start a duplicate that races the daily budget cap (mirrors the coord
+  manager); and (3) idle-guards its proactive re-wake through the same
+  dormant-pane check the dispatch path uses, so it no longer injects into a busy
+  agent's pane and no longer charges the daily cap for phantom wakes.
+- **`send_message` threading is discoverable.** The `send_message` MCP tool now
+  advertises `conversation_id` in its input schema (the handler already read it),
+  so schema-validating clients can use the threading reply `start_conversation`
+  instructs.
+
 ## [0.3.1] — 2026-06-29
 
 ### Added
