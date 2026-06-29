@@ -11,7 +11,7 @@ import (
 // Deps are the injectable side-effects of one tick, making the loop testable
 // without tmux or a relay.
 type Deps struct {
-	Wake       func(project, agent string) error
+	Wake       func(project, agent string) (bool, error)
 	Productive func(project, agent string) bool
 	Now        func() time.Time
 }
@@ -25,7 +25,17 @@ func tick(project string, agents []BoundedAgent, deps Deps) error {
 	}
 	now := deps.Now()
 	for _, name := range decideWakes(st, agents, now) {
-		_ = deps.Wake(project, name) // a ghost session is a no-op upstream; never fatal
+		woke, _ := deps.Wake(project, name) // never fatal; a busy/ghost pane is just "not woken"
+		if !woke {
+			// Phantom wake: refund the provisional charge decideWakes made and
+			// retry on the next tick rather than burning the daily cap.
+			if as := st.Agents[name]; as != nil {
+				as.WakesToday--
+				as.SpentUSD -= policyFor(agents, name).CostPerWakeUSD
+				as.NextWakeAt = now
+			}
+			continue
+		}
 		productive := deps.Productive(project, name)
 		RecordOutcome(st, name, policyFor(agents, name), productive, now)
 	}
@@ -56,7 +66,9 @@ func Run(project, relayURL string, interval time.Duration) error {
 	}
 	client := relay.NewClientWithTimeout(relayURL, 5*time.Second)
 	deps := Deps{
-		Wake: runner.WakeAgent,
+		Wake: func(project, agent string) (bool, error) {
+			return runner.WakeSessionIfDormant(runner.SessionName(project, agent), agent, project)
+		},
 		Productive: func(project, agent string) bool {
 			n, err := client.CountActiveTasks(project, agent)
 			return err == nil && n > 0
