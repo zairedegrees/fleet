@@ -44,7 +44,7 @@ func renderCost(projects []projectCost) string {
 		}
 		for _, a := range p.Agents {
 			if a.Note != "" {
-				fmt.Fprintf(&b, "      %-10s %s  →  ?\n", term.Sanitize(a.Name), a.Note)
+				fmt.Fprintf(&b, "      %-10s %s  →  ?\n", term.Sanitize(a.Name), term.Sanitize(a.Note))
 				continue
 			}
 			fmt.Fprintf(&b, "      %-10s %s  →  %s   [measured]\n",
@@ -93,7 +93,7 @@ func modelTokenSummary(byModel map[string]cost.Usage) string {
 	for _, m := range models {
 		u := byModel[m]
 		parts = append(parts, fmt.Sprintf("%s in %s · out %s · cache-r %s · cache-w %s",
-			shortModel(m), compactTokens(u.In), compactTokens(u.Out),
+			term.Sanitize(shortModel(m)), compactTokens(u.In), compactTokens(u.Out),
 			compactTokens(u.CacheRead), compactTokens(u.CacheCreate)))
 	}
 	return strings.Join(parts, "  |  ")

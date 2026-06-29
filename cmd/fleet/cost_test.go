@@ -47,3 +47,19 @@ func TestRenderCostRelayWarning(t *testing.T) {
 		t.Errorf("relay-down project must render ? with the warning:\n%s", out)
 	}
 }
+
+func TestRenderCostNoteSanitized(t *testing.T) {
+	// Note contains an ANSI escape sequence; term.Sanitize must strip the ESC byte.
+	maliciousNote := "\x1b[31mhack\x1b[0m"
+	projects := []projectCost{{
+		Project: "p",
+		Agents:  []agentCost{{Name: "bad-agent", Note: maliciousNote}},
+	}}
+	out := renderCost(projects)
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("renderCost must not emit raw ESC bytes from Note; got:\n%s", out)
+	}
+	if !strings.Contains(out, "hack") {
+		t.Errorf("renderCost must keep printable chars from Note; got:\n%s", out)
+	}
+}
